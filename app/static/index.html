@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube to PPTX Generator - AIプレゼンテーション自動生成</title>
+    <meta name="description" content="YouTube動画の字幕と静止フレームをAIが自動検知し、PowerPointプレゼンテーション（.pptx）を自動生成する高機能ローカルツールです。">
+    <!-- Google Fonts & Material Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="glass-bg"></div>
+    <div class="app-container">
+        <!-- ヘッダー部 -->
+        <header>
+            <div class="logo">
+                <span class="material-icons-round logo-icon">auto_awesome</span>
+                <h1>YouTube <span class="gradient-text">SlideGen</span></h1>
+            </div>
+            <p class="subtitle">動画からスライドと文字起こしを自動抽出し、プレゼン資料を生成</p>
+        </header>
+
+        <!-- メインコンテンツ -->
+        <main>
+            <!-- 設定・入力パネル -->
+            <section class="card control-panel" id="input-section">
+                <h2>
+                    <span class="material-icons-round">settings</span>
+                    <span>生成パラメータ設定</span>
+                </h2>
+                
+                <form id="generator-form">
+                    <div class="input-group">
+                        <label for="youtube-url">YouTube 動画 URL</label>
+                        <div class="url-input-wrapper">
+                            <span class="material-icons-round input-icon">play_circle_filled</span>
+                            <input type="url" id="youtube-url" placeholder="https://www.youtube.com/watch?v=..." required>
+                        </div>
+                    </div>
+
+                    <div class="input-group range-group" style="margin-bottom: 24px;">
+                        <div class="label-with-value">
+                            <label for="sensitivity">変化検知レベル</label>
+                            <span class="badge" id="sensitivity-val">標準</span>
+                        </div>
+                        <input type="range" id="sensitivity" min="1" max="10" step="1" value="5">
+                        <span class="range-hint">1=非常に敏感（わずかな変化も検知）〜 10=最も鈍感（大きな変化のみ検知）</span>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" id="submit-btn">
+                        <span class="material-icons-round">construction</span>
+                        <span>プレゼンテーションを生成する</span>
+                    </button>
+                </form>
+            </section>
+
+            <!-- ローディング画面 -->
+            <section class="card loading-panel hidden" id="loading-section">
+                <div class="loader-spinner"></div>
+                <h3 id="loading-status">動画データを解析しています...</h3>
+                <p class="loading-subtitle">これには数分かかる場合があります（動画の長さに依存します）</p>
+                <div class="progress-bar-container">
+                    <div class="progress-bar-fill" id="progress-fill"></div>
+                </div>
+            </section>
+
+            <!-- 結果表示パネル -->
+            <section class="result-panel hidden" id="result-section">
+                <!-- サマリーカード -->
+                <div class="card summary-card">
+                    <div class="summary-details">
+                        <span class="material-icons-round success-icon">check_circle</span>
+                        <div>
+                            <h3 id="result-title">動画タイトル</h3>
+                            <p class="slide-count" id="result-slide-count">全 0 枚のスライドを生成しました</p>
+                        </div>
+                    </div>
+                    <a href="#" class="btn btn-success" id="download-btn" download>
+                        <span class="material-icons-round">download</span>
+                        <span>PowerPoint をダウンロード</span>
+                    </a>
+                </div>
+
+                <!-- プレビュータイトル -->
+                <div class="section-title">
+                    <span class="material-icons-round">preview</span>
+                    <h2>生成スライドプレビュー</h2>
+                </div>
+
+                <!-- スライドプレビューグリッド -->
+                <div class="slides-grid" id="slides-preview-container">
+                    <!-- JavaScriptで動的生成 -->
+                </div>
+            </section>
+        </main>
+
+        <!-- フッター -->
+        <footer>
+            <p>&copy; 2026 YouTube SlideGen. Created for Conference & Study.</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

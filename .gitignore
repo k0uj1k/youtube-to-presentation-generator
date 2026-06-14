@@ -1,0 +1,30 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+
+# アプリの一時ファイル・キャッシュ
+app/services/temp_data/
+app/temp_data/
+temp_test/
+cache/
+
+# テストの一時ファイル
+*.mp4
+*.webm
+*.vtt
+*.pptx
+*.mp3
+*.m4a
+
+# エージェント・エディタ関連
+.antigravitycli
+.idea/
+.vscode/
+.DS_Store
