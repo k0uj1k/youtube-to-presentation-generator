@@ -75,6 +75,14 @@ echo "       1. Get your API key from: https://aistudio.google.com/apikey"
 echo "       2. Windows: setx GEMINI_API_KEY your-api-key-here"
 echo "       3. Or set in PowerShell: $env:GEMINI_API_KEY='your-api-key-here'"
 
+pip install uvicorn
+pip install fastapi
+pip install opencv-python
+pip install youtube-transcript-api
+pip install yt-dlp
+pip install python-pptx
+pip install python-dotenv
+
 echo.
 echo "=================================================="
 echo "  Setup complete! You can now run run.bat"

@@ -592,12 +592,12 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
             else:
                 """
                 # Geminiがない場合は元の字幕を表示
-                p_content = tf.add_paragraph()
-                p_content.text = slide_text
-                p_content.font.size = Pt(11)
-                p_content.font.name = "Arial"
-                p_content.font.color.rgb = RGBColor(50, 50, 50)
-                p_content.line_spacing = 1.3
+            p_content = tf.add_paragraph()
+            p_content.text = slide_text
+            p_content.font.size = Pt(11)
+            p_content.font.name = "Arial"
+            p_content.font.color.rgb = RGBColor(50, 50, 50)
+            p_content.line_spacing = 1.3
 
         else:
             # 字幕なし: 画像をスライド全体に広げて配置
