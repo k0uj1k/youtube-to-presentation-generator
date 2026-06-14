@@ -66,7 +66,7 @@ def extract_video_id(url: str) -> str:
     raise ValueError("無効なYouTube URLです。")
 
 
-def get_transcript(video_id: str) -> list:
+def get_transcript(url: str, video_id: str) -> list:
     """
     動画の字幕（文字起こし）を取得する。
     日本語の手動字幕 → 自動生成 → 英語 → SubtitleFetcher の順で試みる。
@@ -104,21 +104,10 @@ def get_transcript(video_id: str) -> list:
     except (TranscriptsDisabled, Exception) as e:
         print(f"字幕の取得に失敗しました (youtube_transcript_api): {e}")
 
-    # Fallback: HTTP 取得（日本語 → 英語 → ASR）
+    # Fallback: HTTP 取得（yt-dlpを使用した解決と自動翻訳対応）
     from .subtitle_service import SubtitleFetcher
-    fetcher = SubtitleFetcher(video_id, lang="ja")
-    subs = fetcher.fetch()
-    if subs:
-        return subs
-
-    fetcher_en = SubtitleFetcher(video_id, lang="en")
-    subs = fetcher_en.fetch()
-    if subs:
-        return subs
-
-    # すべて失敗：空リストを返して字幕なしで続行
-    print("字幕を取得できませんでした。字幕なしで画像のみ処理を続行します。")
-    return []
+    fetcher = SubtitleFetcher(url, video_id, lang="ja")
+    return fetcher.fetch()
 
 
 def download_video(url: str, output_path: str) -> str:
@@ -470,7 +459,7 @@ def process_youtube_to_presentation(
 
     # 1. 字幕の取得（失敗しても処理続行）
     print("字幕の取得中...")
-    transcript = get_transcript(video_id)
+    transcript = get_transcript(url, video_id)
     if transcript:
         print(f"字幕を取得しました（{len(transcript)} エントリ）。")
     else:
