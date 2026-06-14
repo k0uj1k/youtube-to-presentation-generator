@@ -1,24 +1,32 @@
 import json
-import urllib.request
 import re
+import subprocess
+import os
 from pathlib import Path
 from typing import List, Dict
-import yt_dlp
 
 
 class SubtitleFetcher:
     """YouTube 用の字幕を取得するクラス。
-    yt-dlp を使用して字幕 URL を解決し、Web から VTT データをダウンロードしてパースする。
-    日本語手動 -> 日本語自動生成 -> 他言語から日本語への自動翻訳 -> 他言語オリジナル の順で試みる。
+    yt-dlp コマンドラインツールで .vtt ファイルをローカルダウンロードしてパースする。
+    日本語手動 -> 日本語自動生成 -> 他言語オリジナル の順で試みる。
     """
 
-    def __init__(self, url: str, video_id: str, lang: str = "ja", cache_dir: Path = Path("cache")):
+    def __init__(self, url: str, video_id: str, lang: str = "ja", 
+                 cache_dir: Path = Path("cache"), 
+                 temp_dir: Path = None):
         self.url = url
         self.video_id = video_id
         self.lang = lang
-        self.cache_dir = cache_dir
+        self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_file = self.cache_dir / f"{video_id}_{lang}.json"
+        
+        # 一時ディレクトリ（VTT ファイルダウンロード先）
+        if temp_dir is None:
+            temp_dir = Path(__file__).parent / "temp_data" / video_id
+        self.temp_dir = Path(temp_dir)
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
 
     def fetch(self) -> List[Dict]:
         """字幕を取得し、リスト `[{"start": float, "text": str}, ...]` で返す。
@@ -46,85 +54,129 @@ class SubtitleFetcher:
         return []
 
     def _get_subtitles_from_youtube(self) -> List[Dict]:
-        """yt-dlp を用いて字幕 URL を解決し、ダウンロードしてパースする。"""
-        # yt-dlp でメタデータを取得
-        ydl_opts = {
-            'skip_download': True,
-            'writesubtitles': True,
-            'writeautomaticsub': True,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = ydl.extract_info(self.url, download=False)
-            except Exception as e:
-                print(f"yt-dlp によるメタデータの取得に失敗しました: {e}")
-                return []
-
-        subtitles = info.get("subtitles", {})
-        auto_captions = info.get("automatic_captions", {})
-
-        target_url = None
-        needs_translation = False
-
-        # --- 優先順位に従って字幕URLを探す ---
+        """yt-dlp コマンドラインツールで .vtt ファイルをダウンロードしてパースする。"""
+        vtt_file = None
         
-        # 1. 日本語の手動字幕
-        if self.lang in subtitles:
-            target_url = self._get_vtt_url(subtitles[self.lang])
+        # === 優先順位 1: 日本語の手動字幕 ===
+        vtt_file = self._download_vtt_with_ytdlp(
+            subtitle_type="manual",
+            lang=self.lang
+        )
         
-        # 2. 日本語の自動生成字幕
-        if not target_url and self.lang in auto_captions:
-            target_url = self._get_vtt_url(auto_captions[self.lang])
-
-        # 3. 他言語の字幕があり、日本語への自動翻訳が可能な場合
-        # (手動字幕の他言語から探す)
-        if not target_url:
-            for l_code, list_entries in subtitles.items():
-                url = self._get_vtt_url(list_entries)
-                if url:
-                    target_url = url
-                    needs_translation = True
-                    break
-
-        # (自動生成の他言語から探す)
-        if not target_url:
-            for l_code, list_entries in auto_captions.items():
-                url = self._get_vtt_url(list_entries)
-                if url:
-                    target_url = url
-                    needs_translation = True
-                    break
-
-        if not target_url:
+        # === 優先順位 2: 日本語の自動生成字幕 ===
+        if not vtt_file:
+            vtt_file = self._download_vtt_with_ytdlp(
+                subtitle_type="auto",
+                lang=self.lang
+            )
+        
+        # === 優先順位 3: 他言語の手動字幕（オリジナル）===
+        if not vtt_file:
+            vtt_file = self._download_vtt_with_ytdlp(
+                subtitle_type="manual",
+                lang=None  # 利用可能な言語を自動選択
+            )
+        
+        # === 優先順位 4: 他言語の自動生成字幕（オリジナル）===
+        if not vtt_file:
+            vtt_file = self._download_vtt_with_ytdlp(
+                subtitle_type="auto",
+                lang=None
+            )
+        
+        if not vtt_file:
             print("利用可能な字幕が見つかりませんでした。")
             return []
-
-        # 自動翻訳パラメータを付与
-        if needs_translation:
-            # URLに &tlang=ja (または指定言語) を追加して自動翻訳させる
-            connector = "&" if "?" in target_url else "?"
-            target_url = f"{target_url}{connector}tlang={self.lang}"
-            print(f"他言語字幕を検知したため、自動翻訳 ({self.lang}) を適用します。")
-
-        # 字幕データをダウンロード
+        
+        # VTT ファイルをパース
         try:
-            req = urllib.request.Request(target_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req) as resp:
-                vtt_content = resp.read().decode("utf-8")
+            with open(vtt_file, "r", encoding="utf-8") as f:
+                vtt_content = f.read()
             return self._parse_vtt(vtt_content)
         except Exception as e:
-            print(f"字幕データのダウンロードまたはパースに失敗しました: {e}")
+            print(f"VTT ファイルの読み込みまたはパースに失敗しました: {e}")
             return []
-
-    def _get_vtt_url(self, formats_list: List[Dict]) -> str:
-        """フォーマットリストから vtt 形式の URL を抽出する。"""
-        for fmt in formats_list:
-            if fmt.get("ext") == "vtt":
-                return fmt.get("url")
-        # vtt がない場合は最初のものを返す（フォールバック）
-        if formats_list:
-            return formats_list[0].get("url")
-        return None
+    
+    def _download_vtt_with_ytdlp(self, subtitle_type: str = "auto", lang: str = None) -> str:
+        """yt-dlp コマンドで VTT ファイルをダウンロードする。
+        
+        Parameters
+        ----------
+        subtitle_type : str
+            'auto' = 自動生成字幕, 'manual' = 手動字幕
+        lang : str or None
+            言語コード（'ja', 'en' など）。None の場合は利用可能な言語を自動選択。
+        
+        Returns
+        -------
+        str
+            ダウンロードされた VTT ファイルのパス。ない場合は None。
+        """
+        # yt-dlp コマンドのオプション構築
+        cmd = ["yt-dlp", "--skip-download"]
+        
+        # 字幕オプション
+        if subtitle_type == "manual":
+            cmd.append("--write-subs")
+        elif subtitle_type == "auto":
+            cmd.append("--write-auto-subs")
+        
+        # VTT 形式を指定
+        cmd.append("--sub-format")
+        cmd.append("vtt")
+        
+        # 言語指定（lang が指定されている場合）
+        if lang:
+            cmd.append("--sub-langs")
+            cmd.append(lang)
+            lang_suffix = lang
+        else:
+            lang_suffix = "*"  # 利用可能な言語すべて
+        
+        # 出力パターン（ファイル名テンプレート）
+        # デフォルト: {video_id}.{subtitle_type}.{lang}.vtt
+        output_template = os.path.join(str(self.temp_dir), "%(id)s.%(ext)s")
+        cmd.append("-o")
+        cmd.append(output_template)
+        
+        # URL
+        cmd.append(self.url)
+        
+        # yt-dlp を実行
+        try:
+            print(f"字幕ダウンロード中: {' '.join(cmd)}")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            
+            if result.returncode != 0:
+                print(f"yt-dlp エラー: {result.stderr}")
+                return None
+            
+            print(f"yt-dlp 出力: {result.stdout}")
+            
+            # ダウンロードされたファイルを探す
+            vtt_files = list(self.temp_dir.glob("*.vtt"))
+            if vtt_files:
+                vtt_file = vtt_files[0]  # 最初の VTT ファイルを使用
+                print(f"VTT ファイルを取得しました: {vtt_file}")
+                return str(vtt_file)
+            else:
+                print(f"VTT ファイルが見つかりません。タイプ: {subtitle_type}, 言語: {lang}")
+                return None
+                
+        except subprocess.TimeoutExpired:
+            print("yt-dlp コマンドがタイムアウトしました。")
+            return None
+        except FileNotFoundError:
+            print("yt-dlp コマンドが見つかりません。インストールしてください: pip install yt-dlp")
+            return None
+        except Exception as e:
+            print(f"yt-dlp 実行中にエラーが発生しました: {e}")
+            return None
 
     def _parse_vtt(self, vtt_text: str) -> List[Dict]:
         """WebVTT 形式のテキストを解析してリスト `[{"start": float, "text": str}]` に変換する。"""

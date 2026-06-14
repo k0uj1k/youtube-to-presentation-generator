@@ -11,6 +11,7 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 import unicodedata
+# from .gemini_service import GeminiSummarizer
 
 # 一時ファイルを保存するディレクトリ
 TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_data")
@@ -455,6 +456,9 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
     """
     抽出した画像と文字起こしテキストをマッピングし、PowerPointプレゼンテーションを生成する。
     transcript が空リストの場合は画像のみのスライドを生成する。
+    
+    Gemini APIキーが設定されている場合は、スライドごとに字幕をまとめて
+    5行の要点 + メインメッセージを抽出し、スライドに追加する。
     """
     prs = Presentation()
     # スライドサイズを 16:9 ワイドスクリーンに設定
@@ -463,6 +467,14 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
 
     # 白紙スライドのレイアウト (blank layout is index 6)
     blank_slide_layout = prs.slide_layouts[6]
+
+    # --- Gemini 初期化（オプション） ---
+    summarizer = None
+    #ty:
+    #   summarizer = GeminiSummarizer()
+    #  print("✓ Gemini API が有効です。スライド要約を生成します。")
+    #except ValueError as e:
+    #    print(f"ℹ Gemini API が設定されていません。テキストボックスには元の字幕を表示します。({e})")
 
     # --- 1. タイトルスライドの作成 ---
     slide = prs.slides.add_slide(blank_slide_layout)
@@ -525,12 +537,67 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
             p_time.font.color.rgb = RGBColor(0, 123, 255)
             p_time.space_after = Pt(10)
 
-            p_content = tf.add_paragraph()
-            p_content.text = slide_text
-            p_content.font.size = Pt(16)
-            p_content.font.name = "Arial"
-            p_content.font.color.rgb = RGBColor(50, 50, 50)
-            p_content.line_spacing = 1.3
+            # === Gemini で要約を生成 ===
+            """
+            if summarizer and slide_text and "(この区間の文字起こしデータはありません)" not in slide_text:
+                try:
+                    summary_result = summarizer.summarize_slide_content(slide_text)
+                    
+                    # 【キーポイント】セクション
+                    if summary_result.get("key_points"):
+                        p_key_title = tf.add_paragraph()
+                        p_key_title.text = "【要点】"
+                        p_key_title.font.size = Pt(12)
+                        p_key_title.font.bold = True
+                        p_key_title.font.color.rgb = RGBColor(220, 53, 69)
+                        p_key_title.space_before = Pt(8)
+                        p_key_title.space_after = Pt(4)
+                        
+                        for key_point in summary_result["key_points"]:
+                            p_kp = tf.add_paragraph()
+                            p_kp.text = f"• {key_point}"
+                            p_kp.font.size = Pt(11)
+                            p_kp.font.name = "Arial"
+                            p_kp.font.color.rgb = RGBColor(50, 50, 50)
+                            p_kp.level = 0
+                            p_kp.space_after = Pt(3)
+                    
+                    # 【メインメッセージ】セクション
+                    if summary_result.get("main_message"):
+                        p_main_title = tf.add_paragraph()
+                        p_main_title.text = "💡 最も言いたいこと"
+                        p_main_title.font.size = Pt(12)
+                        p_main_title.font.bold = True
+                        p_main_title.font.color.rgb = RGBColor(0, 102, 204)
+                        p_main_title.space_before = Pt(8)
+                        p_main_title.space_after = Pt(4)
+                        
+                        p_main = tf.add_paragraph()
+                        p_main.text = summary_result["main_message"]
+                        p_main.font.size = Pt(11)
+                        p_main.font.name = "Arial"
+                        p_main.font.color.rgb = RGBColor(20, 20, 100)
+                        p_main.font.italic = True
+                        p_main.line_spacing = 1.2
+                        
+                except Exception as e:
+                    print(f"スライド {i+1} の要約生成に失敗: {e}")
+                    # フォールバック: 元の字幕を表示
+                    p_content = tf.add_paragraph()
+                    p_content.text = slide_text
+                    p_content.font.size = Pt(11)
+                    p_content.font.name = "Arial"
+                    p_content.font.color.rgb = RGBColor(50, 50, 50)
+                    p_content.line_spacing = 1.3
+            else:
+                """
+                # Geminiがない場合は元の字幕を表示
+                p_content = tf.add_paragraph()
+                p_content.text = slide_text
+                p_content.font.size = Pt(11)
+                p_content.font.name = "Arial"
+                p_content.font.color.rgb = RGBColor(50, 50, 50)
+                p_content.line_spacing = 1.3
 
         else:
             # 字幕なし: 画像をスライド全体に広げて配置

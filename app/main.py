@@ -5,6 +5,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from app.services.youtube_service import process_youtube_to_presentation, TEMP_DIR
 
+# .env ファイルから環境変数を読み込む
+from dotenv import load_dotenv
+load_dotenv()
+
 app = FastAPI(title="YouTube to Presentation Generator API")
 
 # リクエストスキーマ
