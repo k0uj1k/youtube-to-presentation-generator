@@ -63,12 +63,32 @@ def generate_presentation_api(req: GenerateRequest):
         return result
     except ValueError as ve:
         # ユーザーの入力エラー（字幕なし、URLエラーなど）
-        raise HTTPException(status_code=400, detail=str(ve))
+        error_msg = str(ve)
+        # ユーザーフレンドリーなメッセージに変換
+        user_friendly_msg = _translate_error(error_msg)
+        raise HTTPException(status_code=400, detail=user_friendly_msg)
     except Exception as e:
         # サーバー内部エラー
         import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"処理中にエラーが発生しました: {str(e)}")
+        print(f"ERROR: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="処理中に予期しないエラーが発生しました。ログを確認してください。")
+
+
+def _translate_error(error_msg: str) -> str:
+    """エラーメッセージを日本語に翻訳（既に日本語の場合もある）"""
+    translations = {
+        "Video unavailable": "指定された動画は存在しないか、非公開、または地域制限によりアクセスできません。",
+        "HTTP Error 404": "動画が見つかりません。URLが正しいか確認してください。",
+        "HTTP Error 403": "動画にアクセスできません。地域制限やアクセス権限の問題の可能性があります。",
+        "No data available": "動画データの取得に失敗しました。",
+    }
+    
+    for eng_key, ja_value in translations.items():
+        if eng_key.lower() in error_msg.lower():
+            return ja_value
+    
+    # 既に日本語なら返す、そうでなければ一般的なメッセージ
+    return error_msg if "。" in error_msg or "、" in error_msg else f"エラーが発生しました: {error_msg}"
 
 # フロントエンド静的ファイルの配信
 # 静的ディレクトリを作成
