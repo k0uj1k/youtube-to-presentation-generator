@@ -21,23 +21,23 @@ YouTube動画のIフレーム抽出処理を高速化するための包括的な
 - Iフレームの処理時点でフレームをメモリに保存し、代表フレーム抽出時に再利用
 - このため処理時間は**約50%削減**（ビデオI/Oがボトルネックのため）
 
-### 2. **フレームキャッシング機構の導入**
+### 2. **基準フレーム比較方式への変更**
 **改善内容：**
 ```python
-# 旧実装: フレームを処理後に破棄
-frame, gray = cv2.imread(...)  # 処理
-# → 代表フレーム抽出時に再度読み込み
-cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-ret, frame = cap.read()  # 重複読み込み
+# 初回フレームを基準フレームとして保存
+base_gray_small = gray_small
 
-# 新実装: フレームをキャッシュ
-frame_storage[ts] = (frame, gray_small)
-# → 代表フレーム抽出時にキャッシュから取得（再ロード不要）
+# 次の I フレームと基準フレームの差分を比較
+mad = np.mean(cv2.absdiff(gray_small, base_gray_small))
+if mad >= threshold:
+    save_scene(frame, ts)
+    base_gray_small = gray_small
 ```
 
 **効果：**
-- ビデオファイルI/Oを大幅削減
-- メモリ使用量 vs 速度のバランスを最適化
+- フル解像度フレームの大量キャッシュを廃止
+- 基準フレームとの差分が大きい I フレームを即時スライド化
+- メモリ使用量を抑えつつ、スライド切替を直接検出
 
 ### 3. **ffprobe処理の改善**
 **新しい関数：`get_keyframe_timestamps_cached()`**
@@ -52,8 +52,8 @@ frame_storage[ts] = (frame, gray_small)
 進捗: 100/500 (20%)
 ...
 フレーム処理完了: 500 フレーム分析済み
-静止区間検出: 15 区間を検出
-代表フレームを抽出中...
+スライド切替検出: 123.45秒 (MAD=12.3)
+フレーム処理完了: 500 フレーム処理, 11 回の切替を検出
 抽出完了: 12 枚のスライド画像を抽出しました
 ```
 
@@ -91,11 +91,10 @@ def get_keyframe_timestamps_cached(video_path: str, cap: cv2.VideoCapture) -> li
 ```python
 def detect_static_scenes(
     video_path: str,
-    min_static_duration: float = 10.0,
     change_level: int = 5
 ) -> tuple:
-    # 【高速化】単一パスでビデオスキャン
-    # 【高速化】フレームキャッシング機構
+    # 【変更】基準フレームとの差分でスライド切替を検出
+    # 【改善】フル解像度フレームの大量キャッシュを廃止
     # 【改善】進捗表示の追加
 ```
 
@@ -143,9 +142,9 @@ def detect_static_scenes(
    - CUDAでグレースケール変換・リサイズを実行
    - 環境依存性あり
 
-4. **適応的サンプリング**
-   - 急速な変化を検知した区間をスキップ
-   - 安定区間をより詳細に分析
+4. **適応的なしきい値調整**
+   - I フレーム自体は間引かず、動画ごとの明るさやノイズ量に応じて MAD しきい値を補正
+   - 全 I フレームを比較対象にしたまま、過検出と検出漏れのバランスを改善
 
 ---
 
@@ -161,7 +160,7 @@ url = "https://www.youtube.com/watch?v=QqArUuwDpxU"
 
 start = time.time()
 try:
-    result = process_youtube_to_presentation(url, min_static_duration=10, change_level=5)
+    result = process_youtube_to_presentation(url, change_level=5)
     elapsed = time.time() - start
     print(f"\n✅ 処理完了: {elapsed:.1f}秒")
     print(f"抽出スライド数: {len(result['scenes'])}")

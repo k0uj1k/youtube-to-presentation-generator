@@ -25,16 +25,16 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # 変化レベル（1〜10）を MAD 閾値に変換するテーブル
 # レベル 1 = 非常に敏感（わずかな変化も検知）、10 = 鈍感（大きな変化のみ検知）
 _CHANGE_LEVEL_TO_THRESHOLD = {
-    1:  1.0,
-    2:  2.5,
-    3:  4.0,
-    4:  6.0,
-    5:  8.5,
-    6: 11.0,
-    7: 14.0,
-    8: 18.0,
-    9: 23.0,
-   10: 30.0,
+    1:  5.0,
+    2: 10.0,
+    3: 20.0,
+    4: 35.0,
+    5: 50.0,
+    6: 65.0,
+    7: 80.0,
+    8: 100.0,
+    9: 130.0,
+   10: 180.0,
 }
 
 
@@ -268,24 +268,21 @@ def get_keyframe_timestamps_cached(video_path: str, cap: cv2.VideoCapture) -> li
 
 def detect_static_scenes(
     video_path: str,
-    min_static_duration: float = 10.0,
     change_level: int = 5
 ) -> tuple:
     """
-    Closed GOP の I フレーム（キーフレーム）のみを参照して、
-    min_static_duration 秒以上変化がない静止区間を検知し、代表フレームを抽出する。
-    
-    【高速化】
-    - ビデオスキャンを完全に1回に統一
-    - フレームキャッシング機構を導入（代表フレーム抽出時に再ロード不要）
-    - メモリ効率とスピードのバランスを最適化
+    I フレーム（キーフレーム）を順に参照し、基準フレームとの差分が
+    閾値以上になったフレームを新しいスライドとして抽出する。
+
+    最初に読めた I フレームを 1 枚目のスライド兼基準フレームとし、
+    以降は「現在フレーム」と「基準フレーム」の MAD を比較する。
+    差分が閾値以上ならスライドが変わったと判定し、そのフレームを保存して
+    次の比較基準に更新する。
 
     Parameters
     ----------
     video_path : str
         解析対象の動画ファイルパス。
-    min_static_duration : float
-        静止区間と判定するための最小継続時間（秒）。
     change_level : int
         変化検知の感度レベル（1〜10）。
         1 = 非常に敏感（わずかな変化も検知）、
@@ -301,6 +298,7 @@ def detect_static_scenes(
     change_level = max(1, min(10, int(change_level)))
     threshold = _CHANGE_LEVEL_TO_THRESHOLD[change_level]
     print(f"変化レベル: {change_level} → MAD 閾値: {threshold:.1f}")
+    print("検出方式: 基準フレームとの差分でスライド切替を判定")
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -309,6 +307,9 @@ def detect_static_scenes(
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = total_frames / fps if fps > 0 else 0
+    if fps <= 0:
+        cap.release()
+        raise RuntimeError("動画の FPS を取得できませんでした。")
 
     print(f"動画解析開始: FPS={fps:.2f}, 総フレーム数={total_frames}, 長さ={duration:.2f}秒")
 
@@ -317,141 +318,57 @@ def detect_static_scenes(
     keyframe_times = get_keyframe_timestamps_cached(video_path, cap)
     print(f"参照する I フレーム数: {len(keyframe_times)}")
 
-    # === 【高速化】フレームスキップ + 遡り確認ロジック ===
-    skip_rate = 2  # 2置きで処理（フレーム処理数 50% 削減）
-    frame_diffs = []   # (timestamp, mad) のリスト
-    prev_gray_small = None
-    skipped_frames = []  # スキップされたフレーム情報を一時保存
-    
-    # フレーム情報をこの辞書に保存（タイムスタンプ -> (BGR画像, グレースケール縮小版)）
-    frame_storage = {}
-    
-    print(f"各Iフレームを処理中... (フレームスキップ率: {skip_rate}置き)")
-    processed_count = 0
-    skipped_count = 0
-    lookback_count = 0
-    
-    for i, ts in enumerate(keyframe_times):
-        # 進捗表示（10%刻み）
-        if (i + 1) % max(1, len(keyframe_times) // 10) == 0:
-            print(f"  進捗: {i+1}/{len(keyframe_times)} ({(i+1)*100//len(keyframe_times)}%)")
-        
-        frame_idx = int(ts * fps)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame = cap.read()
-        if not ret:
-            continue
-
-        # 高速化のために縮小（160×90）
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray_small = cv2.resize(gray, (160, 90))
-        
-        # 【高速化】フレームスキップ適用
-        if i % skip_rate != 0:
-            skipped_frames.append((ts, frame, gray_small))
-            skipped_count += 1
-            continue
-        
-        # 通常フレーム（スキップされていないもの）の処理
-        mad = 0.0
-        if prev_gray_small is not None:
-            diff = cv2.absdiff(gray_small, prev_gray_small)
-            mad = float(np.mean(diff))
-            
-            # 【遡り確認】変化が大きい場合、スキップしたフレームも確認
-            change_threshold = threshold * 1.5
-            if mad >= change_threshold and skipped_frames:
-                print(f"  → 大きな変化検出 (MAD={mad:.1f}) タイムスタンプ {ts:.2f}秒で遡り確認開始")
-                for skip_ts, skip_frame, skip_gray_small in skipped_frames:
-                    mad_skip = float(np.mean(cv2.absdiff(skip_gray_small, prev_gray_small)))
-                    frame_diffs.append((skip_ts, mad_skip))
-                    frame_storage[skip_ts] = (skip_frame, skip_gray_small)
-                    lookback_count += 1
-        else:
-            mad = 0.0  # 最初のフレームは差分 0
-
-        frame_diffs.append((ts, mad))
-        
-        # フレームを保存（後で代表フレーム抽出に利用）
-        frame_storage[ts] = (frame, gray_small)
-        
-        prev_gray_small = gray_small
-        processed_count += 1
-        skipped_frames = []  # スキップフレーム情報をリセット
-
-    cap.release()
-    print(f"フレーム処理完了: {processed_count} フレーム処理, {skipped_count} フレームスキップ, {lookback_count} フレーム遡り確認済み")
-
-    # 静止区間（差分が閾値以下の連続フレーム群）を検出
-    static_mask = [mad < threshold for (_, mad) in frame_diffs]
-    timestamps_list = [ts for (ts, _) in frame_diffs]
-
-    static_intervals = []   # 各要素は [idx1, idx2, ...] のリスト
-    current_interval = []
-
-    for idx, (ts, is_static) in enumerate(zip(timestamps_list, static_mask)):
-        if is_static:
-            current_interval.append(idx)
-        else:
-            if current_interval:
-                # 区間の継続時間を確認
-                t_start = timestamps_list[current_interval[0]]
-                t_end = timestamps_list[current_interval[-1]]
-                if (t_end - t_start) >= min_static_duration:
-                    static_intervals.append(current_interval)
-            current_interval = []
-
-    # ループ終了後の最後の区間を処理
-    if current_interval:
-        t_start = timestamps_list[current_interval[0]]
-        t_end = timestamps_list[current_interval[-1]]
-        if (t_end - t_start) >= min_static_duration:
-            static_intervals.append(current_interval)
-
-    print(f"静止区間検出: {len(static_intervals)} 区間を検出")
-
-    # === 【高速化】キャッシュ済みフレームで代表フレームを抽出 ===
     scenes = []
     task_id = str(uuid.uuid4())
     task_temp_dir = os.path.join(TEMP_DIR, task_id)
     os.makedirs(task_temp_dir, exist_ok=True)
 
-    last_extracted_img = None
-
-    print("代表フレームを抽出中...")
-    for interval_idx, interval in enumerate(static_intervals):
-        # 静止区間の中央インデックスを採用
-        mid_pos = interval[len(interval) // 2]
-        timestamp = timestamps_list[mid_pos]
-
-        # キャッシュからフレーム取得
-        if timestamp not in frame_storage:
-            print(f"  警告: タイムスタンプ {timestamp:.2f}秒はキャッシュにありません")
-            continue
-        
-        frame, gray_small = frame_storage[timestamp]
-
-        # 直前の抽出画像との重複チェック
-        if last_extracted_img is not None:
-            diff = cv2.absdiff(gray_small, last_extracted_img)
-            similarity = np.mean(diff)
-            if similarity < 3.0:
-                print(f"  スキップ: タイムスタンプ {timestamp:.2f}秒は直前と類似度が高い (差分={similarity:.1f})")
-                continue
-
-        # 画像を保存
-        img_name = f"slide_{interval_idx}_{int(timestamp)}.jpg"
+    def save_scene(frame, timestamp: float) -> None:
+        slide_index = len(scenes)
+        img_name = f"slide_{slide_index}_{int(timestamp)}.jpg"
         img_path = os.path.join(task_temp_dir, img_name)
         cv2.imwrite(img_path, frame)
-
         scenes.append({
             "timestamp": timestamp,
             "image_path": img_path
         })
-        last_extracted_img = gray_small
 
-    # メモリを節約（フレーム保存領域は不要になったので削除）
-    frame_storage.clear()
+    base_gray_small = None
+    processed_count = 0
+    changed_count = 0
+
+    print("各Iフレームを基準フレームと比較中...")
+    try:
+        for i, ts in enumerate(keyframe_times):
+            if (i + 1) % max(1, len(keyframe_times) // 10) == 0:
+                print(f"  進捗: {i+1}/{len(keyframe_times)} ({(i+1)*100//len(keyframe_times)}%)")
+
+            frame_idx = int(ts * fps)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray_small = cv2.resize(gray, (160, 90))
+            processed_count += 1
+
+            if base_gray_small is None:
+                save_scene(frame, ts)
+                base_gray_small = gray_small
+                print(f"  初期スライド抽出: {ts:.2f}秒")
+                continue
+
+            mad = float(np.mean(cv2.absdiff(gray_small, base_gray_small)))
+            if mad >= threshold:
+                save_scene(frame, ts)
+                base_gray_small = gray_small
+                changed_count += 1
+                print(f"  スライド切替検出: {ts:.2f}秒 (MAD={mad:.1f})")
+    finally:
+        cap.release()
+
+    print(f"フレーム処理完了: {processed_count} フレーム処理, {changed_count} 回の切替を検出")
 
     print(f"抽出完了: {len(scenes)} 枚のスライド画像を抽出しました")
     return scenes, task_temp_dir
@@ -633,7 +550,6 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
 
 def process_youtube_to_presentation(
     url: str,
-    min_static_duration: float = 10.0,
     change_level: int = 5
 ) -> dict:
     """
@@ -644,8 +560,6 @@ def process_youtube_to_presentation(
     ----------
     url : str
         YouTube 動画の URL。
-    min_static_duration : float
-        静止区間の最小継続時間（秒）。
     change_level : int
         変化検知の感度（1〜10）。1が最も敏感、10が最も鈍感。
     """
@@ -668,18 +582,17 @@ def process_youtube_to_presentation(
         print("動画のダウンロード中...")
         title = download_video(url, temp_video_path)
 
-        # 3. I フレームを参照した静止区間の検知と画像抽出
-        print("静止区間の検知中（I フレームのみ参照）...")
+        # 3. I フレームを参照したスライド切替の検知と画像抽出
+        print("スライド切替の検知中（I フレームのみ参照）...")
         scenes, task_temp_dir = detect_static_scenes(
             temp_video_path,
-            min_static_duration=min_static_duration,
             change_level=change_level
         )
 
         if not scenes:
             raise ValueError(
-                "静止シーンが検出されませんでした。"
-                "最小静止時間を短くするか、変化レベルを下げてみてください。"
+                "スライド画像が検出されませんでした。"
+                "変化レベルを下げて、より小さな変化も検出するようにしてください。"
             )
 
         # 4. プレゼンテーションファイルの生成

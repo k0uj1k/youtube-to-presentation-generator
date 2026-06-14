@@ -85,7 +85,6 @@ document.addEventListener("DOMContentLoaded", () => {
         e.preventDefault();
 
         const url = youtubeUrlInput.value.trim();
-        const minStaticDuration = 10.0; // 最小静止時間は10秒に固定
         const changeLevel = parseInt(sensitivityInput.value);
 
         if (!url) {
@@ -116,7 +115,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 },
                 body: JSON.stringify({
                     url: url,
-                    min_static_duration: minStaticDuration,
                     change_level: changeLevel
                 })
             });

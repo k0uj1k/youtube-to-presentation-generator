@@ -14,7 +14,6 @@ app = FastAPI(title="YouTube to Presentation Generator API")
 # リクエストスキーマ
 class GenerateRequest(BaseModel):
     url: str
-    min_static_duration: float = 10.0
     change_level: int = 5  # 変化検知レベル（1=最敏感 〜 10=最鈍感）
 
 # 静的画像配信用エンドポイント
@@ -61,7 +60,6 @@ def generate_presentation_api(req: GenerateRequest):
     try:
         result = process_youtube_to_presentation(
             url=req.url,
-            min_static_duration=req.min_static_duration,
             change_level=req.change_level
         )
         return result

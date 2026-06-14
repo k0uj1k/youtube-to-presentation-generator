@@ -53,7 +53,6 @@ def benchmark_video_processing(url: str, change_levels: list = None):
         try:
             result = process_youtube_to_presentation(
                 url=url,
-                min_static_duration=10.0,
                 change_level=change_level
             )
             
@@ -134,7 +133,6 @@ def profile_single_video(url: str, change_level: int = 5):
     try:
         result = process_youtube_to_presentation(
             url=url,
-            min_static_duration=10.0,
             change_level=change_level
         )
         
