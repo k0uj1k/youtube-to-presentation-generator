@@ -9,9 +9,14 @@ from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFoun
 import yt_dlp
 from pptx import Presentation
 from pptx.util import Inches, Pt
+# pyrefly: ignore [missing-import]
 from pptx.dml.color import RGBColor
 import unicodedata
-# from .gemini_service import GeminiSummarizer
+from dotenv import load_dotenv
+from .gemini_service import GeminiSummarizer
+
+# .env ファイルを読み込む
+load_dotenv()
 
 # 一時ファイルを保存するディレクトリ
 TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_data")
@@ -452,7 +457,7 @@ def detect_static_scenes(
     return scenes, task_temp_dir
 
 
-def create_presentation(title: str, scenes: list, transcript: list, output_pptx_path: str):
+def create_presentation(title: str, scenes: list, transcript: list, output_pptx_path: str, url: str | None = None):
     """
     抽出した画像と文字起こしテキストをマッピングし、PowerPointプレゼンテーションを生成する。
     transcript が空リストの場合は画像のみのスライドを生成する。
@@ -470,11 +475,11 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
 
     # --- Gemini 初期化（オプション） ---
     summarizer = None
-    #ty:
-    #   summarizer = GeminiSummarizer()
-    #  print("✓ Gemini API が有効です。スライド要約を生成します。")
-    #except ValueError as e:
-    #    print(f"ℹ Gemini API が設定されていません。テキストボックスには元の字幕を表示します。({e})")
+    try:
+        summarizer = GeminiSummarizer()
+        print("✓ Gemini API が有効です。スライド要約を生成します。")
+    except ValueError as e:
+        print(f"ℹ Gemini API が設定されていません。テキストボックスには元の字幕を表示します。({e})")
 
     # --- 1. タイトルスライドの作成 ---
     slide = prs.slides.add_slide(blank_slide_layout)
@@ -494,6 +499,14 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
     p2.text = "YouTube動画から自動生成されたスライド資料"
     p2.font.size = Pt(20)
     p2.font.name = "Arial"
+
+    # URL を追加（存在する場合）
+    if url:
+        p3 = tf.add_paragraph()
+        p3.text = f"URL: {url}"
+        p3.font.size = Pt(14)
+        p3.font.name = "Arial"
+        p3.font.color.rgb = RGBColor(0, 102, 204)  # 目立つ色
     p2.font.color.rgb = RGBColor(108, 117, 125)
     p2.space_before = Pt(20)
 
@@ -538,7 +551,6 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
             p_time.space_after = Pt(10)
 
             # === Gemini で要約を生成 ===
-            """
             if summarizer and slide_text and "(この区間の文字起こしデータはありません)" not in slide_text:
                 try:
                     summary_result = summarizer.summarize_slide_content(slide_text)
@@ -590,14 +602,13 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
                     p_content.font.color.rgb = RGBColor(50, 50, 50)
                     p_content.line_spacing = 1.3
             else:
-                """
                 # Geminiがない場合は元の字幕を表示
-            p_content = tf.add_paragraph()
-            p_content.text = slide_text
-            p_content.font.size = Pt(11)
-            p_content.font.name = "Arial"
-            p_content.font.color.rgb = RGBColor(50, 50, 50)
-            p_content.line_spacing = 1.3
+                p_content = tf.add_paragraph()
+                p_content.text = slide_text
+                p_content.font.size = Pt(11)
+                p_content.font.name = "Arial"
+                p_content.font.color.rgb = RGBColor(50, 50, 50)
+                p_content.line_spacing = 1.3
 
         else:
             # 字幕なし: 画像をスライド全体に広げて配置
@@ -686,7 +697,7 @@ def process_youtube_to_presentation(
             counter += 1
 
         print("PowerPointの生成中...")
-        create_presentation(title, scenes, transcript, output_pptx_path)
+        create_presentation(title, scenes, transcript, output_pptx_path, url=url)
 
         # フロントエンドに返す結果データを整形
         formatted_scenes = []
