@@ -82,6 +82,7 @@ pip install youtube-transcript-api
 pip install yt-dlp
 pip install python-pptx
 pip install python-dotenv
+:: Install Google Gemini SDK (google-genai)
 pip install google-genai
 
 echo.

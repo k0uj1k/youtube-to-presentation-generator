@@ -12,11 +12,11 @@ if not exist "%VENV_DIR%" (
     exit /b 1
 )
 
+rem Activate virtual environment
+call "%VENV_DIR%\Scripts\activate.bat"
+
 echo [3/3] Starting local Web server...
-echo Opening http://localhost:8000 in your browser...
-echo.
+start "" http://localhost:8000
 
-start http://localhost:8000
-
-"%VENV_DIR%\Scripts\python" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-pause
+rem Run uvicorn with auto-reload
+"%VENV_DIR%\Scripts\python.exe" -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
