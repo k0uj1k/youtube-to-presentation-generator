@@ -16,7 +16,7 @@
     <div class="glass-bg"></div>
     
     <!-- トースト通知コンテナ -->
-    <div id="toast-container" class="toast-container"></div>
+    <div id="toast-container" class="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
     
     <div class="app-container">
         <!-- ヘッダー部 -->
@@ -55,6 +55,20 @@
                         <span class="range-hint">1=非常に敏感（わずかな変化も検知）〜 10=最も鈍感（大きな変化のみ検知）</span>
                     </div>
 
+                    <div class="input-group" style="margin-bottom: 24px;">
+                        <div class="label-with-value">
+                            <label for="ai-summary-enabled">AIテキスト要約</label>
+                            <span class="badge" id="ai-summary-state">OFF</span>
+                        </div>
+                        <div class="switch-row">
+                            <span class="switch-hint">字幕があるスライドだけを Gemini で要約します</span>
+                            <label class="toggle-switch" for="ai-summary-enabled">
+                                <input type="checkbox" id="ai-summary-enabled" aria-label="AIテキスト要約">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                    </div>
+
                     <button type="submit" class="btn btn-primary" id="submit-btn">
                         <span class="material-icons-round">construction</span>
                         <span>プレゼンテーションを生成する</span>
@@ -70,6 +84,8 @@
                 <div class="progress-bar-container">
                     <div class="progress-bar-fill" id="progress-fill"></div>
                 </div>
+                <!-- ログ表示エリア -->
+                <div id="log-container" class="log-container"></div>
             </section>
 
             <!-- 結果表示パネル -->

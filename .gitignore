@@ -29,6 +29,7 @@ cache/
 .vscode/
 .DS_Store
 .note/
+.tmp/
 
 # credentials
 .env*

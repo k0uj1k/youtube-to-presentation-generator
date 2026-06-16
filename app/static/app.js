@@ -4,6 +4,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const youtubeUrlInput = document.getElementById("youtube-url");
     const sensitivityInput = document.getElementById("sensitivity");
     const sensitivityVal = document.getElementById("sensitivity-val");
+    const aiSummaryEnabled = document.getElementById("ai-summary-enabled");
+    const aiSummaryState = document.getElementById("ai-summary-state");
     const toastContainer = document.getElementById("toast-container");
     
     const inputSection = document.getElementById("input-section");
@@ -36,6 +38,13 @@ document.addEventListener("DOMContentLoaded", () => {
         sensitivityVal.textContent = changeLevelTexts[e.target.value];
     });
 
+    function syncAiSummaryState() {
+        aiSummaryState.textContent = aiSummaryEnabled.checked ? "ON" : "OFF";
+    }
+
+    aiSummaryEnabled.addEventListener("change", syncAiSummaryState);
+    syncAiSummaryState();
+
     // 秒数を分:秒フォーマットに変換するヘルパー関数
     function formatTime(seconds) {
         const mins = Math.floor(seconds / 60);
@@ -43,11 +52,22 @@ document.addEventListener("DOMContentLoaded", () => {
         return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
 
-    // トースト通知を表示する関数
-    function showToast(type, title, message = "", duration = 10000) {
+    // トースト通知を表示する関数（重複防止・プログレス更新対応）
+    const activeToasts = {};
+    function showToast(type, title, message = "", duration = 10000, options = {}) {
+        const { closeable = true, replace = false } = options;
+        // 既存の同種トーストがあれば置き換える
+        if (replace && activeToasts[type]) {
+            const old = activeToasts[type];
+            clearTimeout(old.removeTimer);
+            old.toast.classList.add("exit");
+            setTimeout(() => old.toast.remove(), 300);
+            delete activeToasts[type];
+        }
+        // 重なり防止のため既存トーストをすべて削除
+        toastContainer.querySelectorAll('.toast').forEach(t => t.remove());
         const toast = document.createElement("div");
         toast.className = `toast toast-${type}`;
-
         // アイコン設定
         const iconMap = {
             success: "check_circle",
@@ -57,7 +77,7 @@ document.addEventListener("DOMContentLoaded", () => {
             progress: "hourglass_bottom"
         };
         const icon = iconMap[type] || "info";
-
+        const closeBtnHtml = closeable ? `<button class="toast-close" aria-label="閉じる">✖</button>` : "";
         toast.innerHTML = `
             <span class="material-icons-round toast-icon">${icon}</span>
             <div class="toast-content">
@@ -65,18 +85,37 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${message ? `<div class="toast-message">${escapeHtml(message)}</div>` : ''}
             </div>
             <div class="toast-progress"></div>
+            ${closeBtnHtml}
         `;
-
+        // 閉じるボタンハンドラ
+        if (closeable) {
+            toast.querySelector(".toast-close").addEventListener("click", () => {
+                clearTimeout(removeTimer);
+                toast.classList.add("exit");
+                setTimeout(() => toast.remove(), 300);
+            });
+        }
         toastContainer.appendChild(toast);
-
+        // プログレスバーアニメーション（CSS transition）
+        const progressBar = toast.querySelector(".toast-progress");
+        progressBar.style.transition = `transform ${duration}ms linear`;
+        progressBar.style.transform = "scaleX(1)";
+        requestAnimationFrame(() => {
+            progressBar.style.transform = "scaleX(0)";
+        });
         // 自動削除タイマー
         const removeTimer = setTimeout(() => {
             toast.classList.add("exit");
-            setTimeout(() => {
-                toast.remove();
-            }, 300);
+            setTimeout(() => toast.remove(), 300);
         }, duration);
-
+        // アクティブトーストとして記録
+        activeToasts[type] = { toast, removeTimer };
+        // 削除後にマップからクリア
+        toast.addEventListener('transitionend', () => {
+            if (activeToasts[type] && activeToasts[type].toast === toast) {
+                delete activeToasts[type];
+            }
+        });
         return toast;
     }
 
@@ -86,13 +125,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const url = youtubeUrlInput.value.trim();
         const changeLevel = parseInt(sensitivityInput.value);
+        const aiSummary = aiSummaryEnabled.checked;
 
         if (!url) {
             showToast("error", "URLが入力されていません", "YouTubeの動画URLを入力してください");
             return;
         }
         
-        showToast("info", "処理開始", `変化レベル: ${changeLevelTexts[changeLevel]}`);
+        showToast("info", "処理開始", `変化レベル: ${changeLevelTexts[changeLevel]} / AI要約: ${aiSummary ? "ON" : "OFF"}`);
 
 
         // UI表示の切り替え
@@ -103,7 +143,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         try {
             // 動画解析進捗
-            showToast("progress", "解析中", "YouTube動画を解析しています...");
+            showToast("progress", "解析中", "YouTube動画を解析しています...", 10000, {replace:true});
+    logMessage("YouTube動画の解析を開始しました");
             loadingSection.classList.remove("hidden");
             loadingStatus.textContent = "YouTube動画を解析しています...";
 
@@ -115,7 +156,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 },
                 body: JSON.stringify({
                     url: url,
-                    change_level: changeLevel
+                    change_level: changeLevel,
+                    ai_summary_enabled: aiSummary
                 })
             });
 
@@ -171,9 +213,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 img.addEventListener("load", () => {
                     imageLoadCount++;
                     if (imageLoadCount === 1) {
-                        showToast("info", "画像読み込み中", `${imageLoadCount}/${data.scenes.length}枚読み込み完了`, 3000);
+                        showToast("info", "画像読み込み中", `${imageLoadCount}/${data.scenes.length}枚読み込み完了`, 3000, {replace:true});
+    logMessage(`画像 ${imageLoadCount}/${data.scenes.length} 読み込み完了`);
                     } else if (imageLoadCount === data.scenes.length) {
-                        showToast("success", "すべての画像を読み込みました", `${data.scenes.length}枚のプレビュー準備完了`, 3000);
+                        showToast("success", "すべての画像を読み込みました", `${data.scenes.length}枚のプレビュー準備完了`, 3000, {replace:true});
+    logMessage("すべての画像の読み込みが完了しました");
                     }
                 });
                 
@@ -200,6 +244,17 @@ document.addEventListener("DOMContentLoaded", () => {
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;")
             .replace(/'/g, "&#039;");
+    }
+
+    // ログ表示関数
+    function logMessage(msg) {
+        const logContainer = document.getElementById('log-container');
+        if (!logContainer) return;
+        const p = document.createElement('p');
+        p.textContent = msg;
+        logContainer.appendChild(p);
+        // 自動スクロール
+        logContainer.scrollTop = logContainer.scrollHeight;
     }
 
     // トースト表示（外部から呼び出し可能）

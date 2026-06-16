@@ -113,46 +113,15 @@ def extract_video_id(url: str) -> str:
 
 def get_transcript(url: str, video_id: str) -> list:
     """
-    動画の字幕（文字起こし）を取得する。
-    日本語の手動字幕 → 自動生成 → 英語 → SubtitleFetcher の順で試みる。
-    すべて失敗した場合は空リストを返す（字幕なしで処理続行可能）。
+    動画の字幕（文字起こし）を取得する。SubtitleFetcher のみで取得する。取得できない場合は空リストを返す。
     """
-    try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        # 1. 手動字幕（日本語）
-        try:
-            transcript = transcript_list.find_transcript(['ja'])
-            return transcript.fetch()
-        except NoTranscriptFound:
-            pass
-        # 2. 自動生成字幕（日本語）
-        try:
-            generated = transcript_list.find_generated_transcript(['ja'])
-            return generated.fetch()
-        except NoTranscriptFound:
-            pass
-        # 3. 手動字幕（英語）
-        try:
-            transcript = transcript_list.find_transcript(['en'])
-            return transcript.fetch()
-        except NoTranscriptFound:
-            pass
-        # 4. 自動生成字幕（英語）
-        try:
-            generated = transcript_list.find_generated_transcript(['en'])
-            return generated.fetch()
-        except NoTranscriptFound:
-            pass
-        # 5. 任意の利用可能な字幕（最初のもの）
-        for t in transcript_list:
-            return t.fetch()
-    except (TranscriptsDisabled, Exception) as e:
-        print(f"字幕の取得に失敗しました (youtube_transcript_api): {e}")
-
-    # Fallback: HTTP 取得（yt-dlpを使用した解決と自動翻訳対応）
     from .subtitle_service import SubtitleFetcher
     fetcher = SubtitleFetcher(url, video_id, lang="ja")
-    return fetcher.fetch()
+    try:
+        return fetcher.fetch()
+    except Exception as e:
+        print(f"字幕の取得に失敗しました: {e}")
+        return []
 
 
 def download_video(url: str, output_path: str) -> str:
@@ -374,12 +343,19 @@ def detect_static_scenes(
     return scenes, task_temp_dir
 
 
-def create_presentation(title: str, scenes: list, transcript: list, output_pptx_path: str, url: str | None = None):
+def create_presentation(
+    title: str,
+    scenes: list,
+    transcript: list,
+    output_pptx_path: str,
+    url: str | None = None,
+    ai_summary_enabled: bool = False
+):
     """
     抽出した画像と文字起こしテキストをマッピングし、PowerPointプレゼンテーションを生成する。
     transcript が空リストの場合は画像のみのスライドを生成する。
     
-    Gemini APIキーが設定されている場合は、スライドごとに字幕をまとめて
+    ai_summary_enabled が True の場合のみ、スライドごとに字幕をまとめて
     5行の要点 + メインメッセージを抽出し、スライドに追加する。
     """
     prs = Presentation()
@@ -390,13 +366,14 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
     # 白紙スライドのレイアウト (blank layout is index 6)
     blank_slide_layout = prs.slide_layouts[6]
 
-    # --- Gemini 初期化（オプション） ---
     summarizer = None
-    try:
-        summarizer = GeminiSummarizer()
-        print("✓ Gemini API が有効です。スライド要約を生成します。")
-    except ValueError as e:
-        print(f"ℹ Gemini API が設定されていません。テキストボックスには元の字幕を表示します。({e})")
+    if ai_summary_enabled:
+        try:
+            summarizer = GeminiSummarizer()
+            print("✓ Gemini API が有効です。スライド要約を生成します。")
+        except Exception as e:
+            ai_summary_enabled = False
+            print(f"ℹ Gemini 要約を無効化しました。({e})")
 
     # --- 1. タイトルスライドの作成 ---
     slide = prs.slides.add_slide(blank_slide_layout)
@@ -468,10 +445,10 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
             p_time.space_after = Pt(10)
 
             # === Gemini で要約を生成 ===
-            if summarizer and slide_text and "(この区間の文字起こしデータはありません)" not in slide_text:
+            if ai_summary_enabled and summarizer and slide_text and "(この区間の文字起こしデータはありません)" not in slide_text:
                 try:
                     summary_result = summarizer.summarize_slide_content(slide_text)
-                    
+
                     # 【キーポイント】セクション
                     if summary_result.get("key_points"):
                         p_key_title = tf.add_paragraph()
@@ -481,7 +458,7 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
                         p_key_title.font.color.rgb = RGBColor(220, 53, 69)
                         p_key_title.space_before = Pt(8)
                         p_key_title.space_after = Pt(4)
-                        
+
                         for key_point in summary_result["key_points"]:
                             p_kp = tf.add_paragraph()
                             p_kp.text = f"• {key_point}"
@@ -490,7 +467,7 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
                             p_kp.font.color.rgb = RGBColor(50, 50, 50)
                             p_kp.level = 0
                             p_kp.space_after = Pt(3)
-                    
+
                     # 【メインメッセージ】セクション
                     if summary_result.get("main_message"):
                         p_main_title = tf.add_paragraph()
@@ -500,7 +477,7 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
                         p_main_title.font.color.rgb = RGBColor(0, 102, 204)
                         p_main_title.space_before = Pt(8)
                         p_main_title.space_after = Pt(4)
-                        
+
                         p_main = tf.add_paragraph()
                         p_main.text = summary_result["main_message"]
                         p_main.font.size = Pt(11)
@@ -508,7 +485,7 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
                         p_main.font.color.rgb = RGBColor(20, 20, 100)
                         p_main.font.italic = True
                         p_main.line_spacing = 1.2
-                        
+
                 except Exception as e:
                     print(f"スライド {i+1} の要約生成に失敗: {e}")
                     # フォールバック: 元の字幕を表示
@@ -550,7 +527,8 @@ def create_presentation(title: str, scenes: list, transcript: list, output_pptx_
 
 def process_youtube_to_presentation(
     url: str,
-    change_level: int = 5
+    change_level: int = 5,
+    ai_summary_enabled: bool = False
 ) -> dict:
     """
     YouTube URL からプレゼンテーションを生成する一連の処理を実行する。
@@ -562,6 +540,8 @@ def process_youtube_to_presentation(
         YouTube 動画の URL。
     change_level : int
         変化検知の感度（1〜10）。1が最も敏感、10が最も鈍感。
+    ai_summary_enabled : bool
+        True のときだけ Gemini 要約を有効化する。
     """
     video_id = extract_video_id(url)
 
@@ -610,7 +590,7 @@ def process_youtube_to_presentation(
             counter += 1
 
         print("PowerPointの生成中...")
-        create_presentation(title, scenes, transcript, output_pptx_path, url=url)
+        create_presentation(title, scenes, transcript, output_pptx_path, url=url, ai_summary_enabled=ai_summary_enabled)
 
         # フロントエンドに返す結果データを整形
         formatted_scenes = []

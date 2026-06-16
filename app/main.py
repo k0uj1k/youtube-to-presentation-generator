@@ -15,6 +15,7 @@ app = FastAPI(title="YouTube to Presentation Generator API")
 class GenerateRequest(BaseModel):
     url: str
     change_level: int = 5  # 変化検知レベル（1=最敏感 〜 10=最鈍感）
+    ai_summary_enabled: bool = False
 
 # 静的画像配信用エンドポイント
 @app.get("/api/images/{task_id}/{image_name}")
@@ -60,7 +61,8 @@ def generate_presentation_api(req: GenerateRequest):
     try:
         result = process_youtube_to_presentation(
             url=req.url,
-            change_level=req.change_level
+            change_level=req.change_level,
+            ai_summary_enabled=req.ai_summary_enabled
         )
         return result
     except ValueError as ve:
