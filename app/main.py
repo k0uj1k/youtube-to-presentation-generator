@@ -3,7 +3,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from app.services.youtube_service import process_youtube_to_presentation, TEMP_DIR
+from starlette.background import BackgroundTask
+from app.services.youtube_service import (
+    process_youtube_to_presentation,
+    cleanup_all_source_cache,
+    cleanup_source_cache_for_task,
+    TEMP_DIR,
+)
 
 # .env ファイルから環境変数を読み込む
 from dotenv import load_dotenv
@@ -15,6 +21,7 @@ app = FastAPI(title="YouTube to Presentation Generator API")
 class GenerateRequest(BaseModel):
     url: str
     change_level: int = 5  # 変化検知レベル（1=最敏感 〜 10=最鈍感）
+    comparison_resolution: str = "160x90"
     ai_summary_enabled: bool = False
 
 # 静的画像配信用エンドポイント
@@ -49,7 +56,8 @@ def download_presentation(task_id: str, filename: str):
     return FileResponse(
         pptx_path, 
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        filename=safe_filename
+        filename=safe_filename,
+        background=BackgroundTask(cleanup_source_cache_for_task, safe_task_id)
     )
 
 # プレゼンテーション生成API
@@ -62,6 +70,7 @@ def generate_presentation_api(req: GenerateRequest):
         result = process_youtube_to_presentation(
             url=req.url,
             change_level=req.change_level,
+            comparison_resolution=req.comparison_resolution,
             ai_summary_enabled=req.ai_summary_enabled
         )
         return result
@@ -76,6 +85,20 @@ def generate_presentation_api(req: GenerateRequest):
         import traceback
         print(f"ERROR: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="処理中に予期しないエラーが発生しました。ログを確認してください。")
+
+
+@app.post("/api/source-cache/clear")
+def clear_source_cache_api():
+    """
+    保持中の動画・字幕ソースキャッシュをすべて削除する。
+    """
+    try:
+        cleanup_all_source_cache()
+        return {"success": True}
+    except Exception as e:
+        import traceback
+        print(f"ERROR: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"ソースキャッシュの削除に失敗しました: {e}")
 
 
 def _translate_error(error_msg: str) -> str:

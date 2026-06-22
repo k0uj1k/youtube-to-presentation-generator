@@ -10,25 +10,21 @@
 - **エラーハンドリング**: 非公開や地域制限など、動画が利用不可の場合でもエラー内容を翻訳した日本語メッセージとともに安全に処理します。
 
 ## 動作要件
-- OS: Windows 10 / 11
-- Python: 3.8 以上 (環境変数 PATH に `python` が登録されている必要があります)
+- OS: Linux / macOS
+- Python: 3.8 以上 (環境変数 PATH に `python3` または `python` が登録されている必要があります)
 
 ## セットアップと起動手順
 
 ### 1. セットアップ（初回のみ）
 1. 本プロジェクトのルートディレクトリを開きます。
-2. [setup.bat](file:///C:/Users/k0uj1k/OneDrive/Conferences/work/setup.bat) をダブルクリックして実行します。
-3. 仮想環境（`.venv`）が作成され、必要なパッケージがインストールされます。
-   - 追加で **google-genai** パッケージをインストールします:
-     ```bash
-     pip install google-genai
-     ```
-4. `[3/3] Setup complete.` と表示されれば完了です。何かキーを押してウィンドウを閉じてください。
+2. ターミナルで `./setup.sh` を実行します。
+3. 仮想環境（`.venv`）が作成され、必要なパッケージと Playwright ブラウザがインストールされます。
+4. `Setup complete!` と表示されれば完了です。
 
 ### 2. アプリケーションの起動
-1. 本プロジェクトのルートディレクトリにある [run.bat](file:///C:/Users/k0uj1k/OneDrive/Conferences/work/run.bat) をダブルクリックして実行します。
-2. Webサーバーが起動し、自動的にブラウザが開いて `http://localhost:8000` にアクセスします。
-3. 終了する場合は、起動したコマンドプロンプトのウィンドウを閉じるか、`Ctrl + C` を押してください。
+1. ターミナルで `./run.sh` を実行します。
+2. ブラウザで `http://localhost:8000` にアクセスします。
+3. 終了する場合は、`Ctrl + C` を押してください。
 
 ## 使い方
 1. ブラウザに表示された画面で、解析したい **YouTube 動画 URL** を入力します。
@@ -41,8 +37,9 @@
   - `main.py` : FastAPI を用いたサーバーエントリーポイント
   - `services/` : ビジネスロジック（動画処理、画像抽出、PPTX 生成など）
   - `static/` : フロントエンドの UI リソース（HTML/CSS/JS）
-- `setup.bat` : 初期セットアップ用スクリプト
-- `run.bat` : サーバー起動用スクリプト
+- `setup.sh` : 初期セットアップ用スクリプト
+- `run.sh` : Linux / macOS 用サーバー起動スクリプト
+- `run.bat` : Windows 用サーバー起動スクリプト
 - `requirements.txt` : 依存パッケージの定義ファイル
 
 ## ✨ Iフレーム抽出の高速化（v2.0）
@@ -88,21 +85,21 @@ python benchmark_iframe_extraction.py "https://www.youtube.com/watch?v=<VIDEO_ID
 - **エラーハンドリング**: 非公開や地域制限など、動画が利用不可の場合でもエラー内容を翻訳した日本語メッセージとともに安全に処理します。
 
 ## 動作要件
-- OS: Windows 10 / 11
-- Python: 3.8 以上 (環境変数 PATH に `python` が登録されている必要があります)
+- OS: Linux / macOS
+- Python: 3.8 以上 (環境変数 PATH に `python3` または `python` が登録されている必要があります)
 
 ## セットアップと起動手順
 
 ### 1. セットアップ（初回のみ）
 1. 本プロジェクトのルートディレクトリを開きます。
-2. [setup.bat](file:///C:/Users/k0uj1k/OneDrive/Conferences/work/setup.bat) をダブルクリックして実行します。
+2. ターミナルで `./setup.sh` を実行します。
 3. 自動的に仮想環境（`.venv`）が作成され、必要なパッケージと `Playwright` 関連のブラウザコンポーネントがインストールされます。
-4. `[3/3] Setup complete.` と表示されれば完了です。何かキーを押してウィンドウを閉じてください。
+4. `Setup complete!` と表示されれば完了です。
 
 ### 2. アプリケーションの起動
-1. 本プロジェクトのルートディレクトリにある [run.bat](file:///C:/Users/k0uj1k/OneDrive/Conferences/work/run.bat) をダブルクリックして実行します。
-2. Webサーバーが起動し、自動的にブラウザが開いて `http://localhost:8000` にアクセスします。
-3. 終了する場合は、起動したコマンドプロンプトのウィンドウを閉じるか、`Ctrl + C` を押してください。
+1. ターミナルで `./run.sh` を実行します。
+2. ブラウザで `http://localhost:8000` にアクセスします。
+3. 終了する場合は、`Ctrl + C` を押してください。
 
 ## 使い方
 1. ブラウザに表示された画面で、解析したい **YouTube 動画 URL** を入力します。
@@ -115,8 +112,9 @@ python benchmark_iframe_extraction.py "https://www.youtube.com/watch?v=<VIDEO_ID
   - `main.py` : FastAPIを用いたサーバーエントリーポイント
   - `services/` : ビジネスロジック（動画処理、画像抽出、PPTX生成など）
   - `static/` : フロントエンドのUIリソース（HTML/CSS/JS）
-- `setup.bat` : 初期セットアップ用スクリプト
-- `run.bat` : サーバー起動用スクリプト
+- `setup.sh` : 初期セットアップ用スクリプト
+- `run.sh` : Linux / macOS 用サーバー起動スクリプト
+- `run.bat` : Windows 用サーバー起動スクリプト
 - `requirements.txt` : 依存パッケージの定義ファイル
 
 ## ✨ Iフレーム抽出の高速化（v2.0）

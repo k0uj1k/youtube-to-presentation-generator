@@ -57,6 +57,20 @@
 
                     <div class="input-group" style="margin-bottom: 24px;">
                         <div class="label-with-value">
+                            <label for="comparison-resolution-enabled">比較解像度</label>
+                            <span class="badge" id="comparison-resolution-state">160x90</span>
+                        </div>
+                        <div class="switch-row">
+                            <span class="switch-hint">デフォルトは 160x90。ON にすると 480x270 で比較して、より細かい差分を見ます</span>
+                            <label class="toggle-switch" for="comparison-resolution-enabled">
+                                <input type="checkbox" id="comparison-resolution-enabled" aria-label="比較解像度切替">
+                                <span class="toggle-track"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="input-group" style="margin-bottom: 24px;">
+                        <div class="label-with-value">
                             <label for="ai-summary-enabled">AIテキスト要約</label>
                             <span class="badge" id="ai-summary-state">OFF</span>
                         </div>
@@ -73,19 +87,12 @@
                         <span class="material-icons-round">construction</span>
                         <span>プレゼンテーションを生成する</span>
                     </button>
-                </form>
-            </section>
 
-            <!-- ローディング画面 -->
-            <section class="card loading-panel hidden" id="loading-section">
-                <div class="loader-spinner"></div>
-                <h3 id="loading-status">動画データを解析しています...</h3>
-                <p class="loading-subtitle">これには数分かかる場合があります（動画の長さに依存します）</p>
-                <div class="progress-bar-container">
-                    <div class="progress-bar-fill" id="progress-fill"></div>
-                </div>
-                <!-- ログ表示エリア -->
-                <div id="log-container" class="log-container"></div>
+                    <button type="button" class="btn btn-danger" id="exit-btn" style="margin-top: 12px;">
+                        <span class="material-icons-round">exit_to_app</span>
+                        <span>終了</span>
+                    </button>
+                </form>
             </section>
 
             <!-- 結果表示パネル -->

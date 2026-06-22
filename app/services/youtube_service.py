@@ -1,5 +1,7 @@
+import json
 import os
 import re
+import shutil
 import uuid
 import subprocess
 import cv2
@@ -12,6 +14,7 @@ from pptx.util import Inches, Pt
 # pyrefly: ignore [missing-import]
 from pptx.dml.color import RGBColor
 import unicodedata
+from pathlib import Path
 from dotenv import load_dotenv
 from .gemini_service import GeminiSummarizer
 
@@ -21,21 +24,122 @@ load_dotenv()
 # 一時ファイルを保存するディレクトリ
 TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_data")
 os.makedirs(TEMP_DIR, exist_ok=True)
+SOURCE_CACHE_DIR = os.path.join(TEMP_DIR, "source_cache")
+os.makedirs(SOURCE_CACHE_DIR, exist_ok=True)
+
+_TASK_METADATA_FILENAME = "task_metadata.json"
 
 # 変化レベル（1〜10）を MAD 閾値に変換するテーブル
-# レベル 1 = 非常に敏感（わずかな変化も検知）、10 = 鈍感（大きな変化のみ検知）
+# レベル 1 = 1.0、レベル 5 = 15.0、レベル 10 = 100.0 となるように分布
+# 1〜5 は細かく、5〜10 は広めに調整できるよう段階的に増やしている
 _CHANGE_LEVEL_TO_THRESHOLD = {
-    1:  5.0,
-    2: 10.0,
-    3: 20.0,
-    4: 35.0,
-    5: 50.0,
-    6: 65.0,
-    7: 80.0,
-    8: 100.0,
-    9: 130.0,
-   10: 180.0,
+    1: 1.0,
+    2: 4.5,
+    3: 8.0,
+    4: 11.5,
+    5: 15.0,
+    6: 32.0,
+    7: 49.0,
+    8: 66.0,
+    9: 83.0,
+    10: 100.0,
 }
+
+_COMPARISON_RESOLUTIONS = {
+    "160x90": (160, 90),
+    "480x270": (480, 270),
+}
+
+
+def _get_source_cache_paths(video_id: str) -> tuple[str, str, str]:
+    source_cache_dir = os.path.join(SOURCE_CACHE_DIR, video_id)
+    os.makedirs(source_cache_dir, exist_ok=True)
+    return (
+        source_cache_dir,
+        os.path.join(source_cache_dir, "source.mp4"),
+        os.path.join(source_cache_dir, "source_metadata.json"),
+    )
+
+
+def _load_source_metadata(metadata_path: str) -> dict:
+    if not os.path.exists(metadata_path):
+        return {}
+
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception as e:
+        print(f"ソースメタデータの読み込みに失敗しました: {e}")
+        return {}
+
+
+def _save_source_metadata(metadata_path: str, title: str, url: str) -> None:
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump({"title": title, "url": url}, f, ensure_ascii=False, indent=2)
+
+
+def _write_task_metadata(task_temp_dir: str, source_cache_dir: str) -> None:
+    metadata_path = os.path.join(task_temp_dir, _TASK_METADATA_FILENAME)
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump({"source_cache_dir": source_cache_dir}, f, ensure_ascii=False, indent=2)
+
+
+def cleanup_source_cache_for_task(task_id: str) -> None:
+    safe_task_id = os.path.basename(task_id)
+    task_temp_dir = os.path.join(TEMP_DIR, safe_task_id)
+    metadata_path = os.path.join(task_temp_dir, _TASK_METADATA_FILENAME)
+    if not os.path.exists(metadata_path):
+        return
+
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+    except Exception as e:
+        print(f"タスクメタデータの読み込みに失敗しました: {e}")
+        return
+
+    source_cache_dir = metadata.get("source_cache_dir")
+    if not source_cache_dir:
+        return
+
+    abs_cache_root = os.path.abspath(SOURCE_CACHE_DIR)
+    abs_source_cache_dir = os.path.abspath(source_cache_dir)
+    if not abs_source_cache_dir.startswith(abs_cache_root + os.sep):
+        print(f"想定外のキャッシュパスのため削除をスキップします: {source_cache_dir}")
+        return
+
+    if os.path.isdir(abs_source_cache_dir):
+        shutil.rmtree(abs_source_cache_dir)
+        print(f"ソースキャッシュを削除しました: {abs_source_cache_dir}")
+
+    try:
+        os.remove(metadata_path)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"タスクメタデータの削除に失敗しました: {e}")
+
+
+def cleanup_all_source_cache() -> None:
+    abs_cache_root = os.path.abspath(SOURCE_CACHE_DIR)
+    if not os.path.isdir(abs_cache_root):
+        os.makedirs(abs_cache_root, exist_ok=True)
+        return
+
+    for entry_name in os.listdir(abs_cache_root):
+        entry_path = os.path.join(abs_cache_root, entry_name)
+        abs_entry_path = os.path.abspath(entry_path)
+        if not abs_entry_path.startswith(abs_cache_root + os.sep):
+            print(f"想定外のキャッシュパスのため削除をスキップします: {entry_path}")
+            continue
+
+        if os.path.isdir(abs_entry_path):
+            shutil.rmtree(abs_entry_path)
+            print(f"ソースキャッシュを削除しました: {abs_entry_path}")
+        elif os.path.isfile(abs_entry_path):
+            os.remove(abs_entry_path)
+            print(f"ソースキャッシュファイルを削除しました: {abs_entry_path}")
 
 
 def sanitize_filename(title: str, max_length: int = 200) -> str:
@@ -116,7 +220,14 @@ def get_transcript(url: str, video_id: str) -> list:
     動画の字幕（文字起こし）を取得する。SubtitleFetcher のみで取得する。取得できない場合は空リストを返す。
     """
     from .subtitle_service import SubtitleFetcher
-    fetcher = SubtitleFetcher(url, video_id, lang="ja")
+    source_cache_dir, _, _ = _get_source_cache_paths(video_id)
+    fetcher = SubtitleFetcher(
+        url,
+        video_id,
+        lang="ja",
+        cache_dir=Path(source_cache_dir),
+        temp_dir=Path(source_cache_dir)
+    )
     try:
         return fetcher.fetch()
     except Exception as e:
@@ -124,10 +235,13 @@ def get_transcript(url: str, video_id: str) -> list:
         return []
 
 
-def download_video(url: str, output_path: str) -> str:
+def download_video(url: str, output_path: str, metadata_path: str) -> str:
     """
     yt-dlpを使用して画像抽出用に高精細な動画（例: 1080p）をダウンロードする。
     """
+    cached_metadata = _load_source_metadata(metadata_path)
+    download_required = not os.path.exists(output_path)
+
     ydl_opts = {
         'format': 'bestvideo[height<=1080][ext=mp4]/best[height<=1080][ext=mp4]/best[ext=mp4]',  # 高画質なスライド画像抽出のため1080p以下の最高画質MP4を選択
         'outtmpl': output_path,
@@ -135,9 +249,16 @@ def download_video(url: str, output_path: str) -> str:
         'no_warnings': True,
     }
     try:
+        if download_required:
+            print("動画をダウンロードします。")
+        else:
+            print(f"既存の動画キャッシュを再利用します: {output_path}")
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            return info.get('title', 'YouTube Video')
+            info = ydl.extract_info(url, download=download_required)
+            title = info.get('title') or cached_metadata.get("title") or 'YouTube Video'
+            _save_source_metadata(metadata_path, title, url)
+            return title
     except yt_dlp.utils.DownloadError as e:
         error_msg = str(e)
         if "Video unavailable" in error_msg:
@@ -235,9 +356,53 @@ def get_keyframe_timestamps_cached(video_path: str, cap: cv2.VideoCapture) -> li
     return [i / fps for i in range(0, total_frames, step)]
 
 
+def _open_video_with_pyav(video_path: str):
+    try:
+        import av
+    except ImportError as e:
+        raise RuntimeError(
+            "AV1 動画のデコードに必要な PyAV が見つかりません。setup.sh を再実行してください。"
+        ) from e
+
+    container = av.open(video_path)
+    if not container.streams.video:
+        container.close()
+        raise RuntimeError("動画ストリームが見つかりませんでした。")
+
+    stream = container.streams.video[0]
+    frame_rate = stream.average_rate or stream.base_rate
+    fps = float(frame_rate) if frame_rate else 0.0
+    duration = float(stream.duration * stream.time_base) if stream.duration and stream.time_base else 0.0
+    total_frames = stream.frames or (int(duration * fps) if duration > 0 and fps > 0 else 0)
+    return container, stream, fps, total_frames, duration
+
+
+def _read_frame_with_pyav(container, stream, timestamp: float, fps: float):
+    time_base = float(stream.time_base) if stream.time_base else None
+    if time_base is None or time_base <= 0:
+        raise RuntimeError("AV1 動画の time_base を取得できませんでした。")
+
+    seek_target = max(0, int(timestamp / time_base))
+    container.seek(seek_target, stream=stream, any_frame=False, backward=True)
+    tolerance = 1.0 / max(fps, 1.0)
+
+    for frame in container.decode(stream):
+        if frame.pts is None:
+            continue
+
+        frame_time = float(frame.time) if frame.time is not None else float(frame.pts * stream.time_base)
+        if frame_time + tolerance < timestamp:
+            continue
+
+        return frame.to_ndarray(format="bgr24")
+
+    return None
+
+
 def detect_static_scenes(
     video_path: str,
-    change_level: int = 5
+    change_level: int = 5,
+    comparison_resolution: str = "160x90"
 ) -> tuple:
     """
     I フレーム（キーフレーム）を順に参照し、基準フレームとの差分が
@@ -256,6 +421,8 @@ def detect_static_scenes(
         変化検知の感度レベル（1〜10）。
         1 = 非常に敏感（わずかな変化も検知）、
         10 = 鈍感（大きな変化のみ検知）。
+    comparison_resolution : str
+        差分比較に使う縮小解像度。`160x90` または `480x270`。
 
     Returns
     -------
@@ -266,25 +433,61 @@ def detect_static_scenes(
     # 変化レベルを MAD 閾値に変換
     change_level = max(1, min(10, int(change_level)))
     threshold = _CHANGE_LEVEL_TO_THRESHOLD[change_level]
+    if comparison_resolution not in _COMPARISON_RESOLUTIONS:
+        raise ValueError("比較解像度は 160x90 または 480x270 を指定してください。")
+    resize_width, resize_height = _COMPARISON_RESOLUTIONS[comparison_resolution]
     print(f"変化レベル: {change_level} → MAD 閾値: {threshold:.1f}")
+    print(f"比較解像度: {comparison_resolution}")
     print("検出方式: 基準フレームとの差分でスライド切替を判定")
 
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError("動画ファイルを開けませんでした。")
+    video_codec = None
+    pyav_container = None
+    pyav_stream = None
+    cap = None
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = total_frames / fps if fps > 0 else 0
+    try:
+        probe_cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            video_path,
+        ]
+        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=30)
+        if probe_result.returncode == 0:
+            codec_names = probe_result.stdout.strip().splitlines()
+            video_codec = codec_names[0].lower() if codec_names else None
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        video_codec = None
+
+    use_pyav_decoder = video_codec == "av1"
+
+    if use_pyav_decoder:
+        pyav_container, pyav_stream, fps, total_frames, duration = _open_video_with_pyav(video_path)
+    else:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise RuntimeError("動画ファイルを開けませんでした。")
+
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / fps if fps > 0 else 0
+
     if fps <= 0:
-        cap.release()
+        if cap is not None:
+            cap.release()
+        if pyav_container is not None:
+            pyav_container.close()
         raise RuntimeError("動画の FPS を取得できませんでした。")
 
     print(f"動画解析開始: FPS={fps:.2f}, 総フレーム数={total_frames}, 長さ={duration:.2f}秒")
+    if use_pyav_decoder:
+        print("AV1 動画のため PyAV デコーダーを使用します。")
 
     # I フレームのタイムスタンプを取得（改善版）
     print("I フレーム（キーフレーム）のタイムスタンプを取得中...")
-    keyframe_times = get_keyframe_timestamps_cached(video_path, cap)
+    keyframe_times = get_keyframe_timestamps_cached(video_path, cap) if cap is not None else get_keyframe_timestamps(video_path)
     print(f"参照する I フレーム数: {len(keyframe_times)}")
 
     scenes = []
@@ -312,14 +515,19 @@ def detect_static_scenes(
             if (i + 1) % max(1, len(keyframe_times) // 10) == 0:
                 print(f"  進捗: {i+1}/{len(keyframe_times)} ({(i+1)*100//len(keyframe_times)}%)")
 
-            frame_idx = int(ts * fps)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ret, frame = cap.read()
-            if not ret:
-                continue
+            if use_pyav_decoder:
+                frame = _read_frame_with_pyav(pyav_container, pyav_stream, ts, fps)
+                if frame is None:
+                    continue
+            else:
+                frame_idx = int(ts * fps)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                ret, frame = cap.read()
+                if not ret:
+                    continue
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray_small = cv2.resize(gray, (160, 90))
+            gray_small = cv2.resize(gray, (resize_width, resize_height))
             processed_count += 1
 
             if base_gray_small is None:
@@ -335,7 +543,10 @@ def detect_static_scenes(
                 changed_count += 1
                 print(f"  スライド切替検出: {ts:.2f}秒 (MAD={mad:.1f})")
     finally:
-        cap.release()
+        if cap is not None:
+            cap.release()
+        if pyav_container is not None:
+            pyav_container.close()
 
     print(f"フレーム処理完了: {processed_count} フレーム処理, {changed_count} 回の切替を検出")
 
@@ -528,6 +739,7 @@ def create_presentation(
 def process_youtube_to_presentation(
     url: str,
     change_level: int = 5,
+    comparison_resolution: str = "160x90",
     ai_summary_enabled: bool = False
 ) -> dict:
     """
@@ -540,10 +752,13 @@ def process_youtube_to_presentation(
         YouTube 動画の URL。
     change_level : int
         変化検知の感度（1〜10）。1が最も敏感、10が最も鈍感。
+    comparison_resolution : str
+        差分比較に使う縮小解像度。`160x90` または `480x270`。
     ai_summary_enabled : bool
         True のときだけ Gemini 要約を有効化する。
     """
     video_id = extract_video_id(url)
+    source_cache_dir, temp_video_path, source_metadata_path = _get_source_cache_paths(video_id)
 
     # 1. 字幕の取得（失敗しても処理続行）
     print("字幕の取得中...")
@@ -553,80 +768,69 @@ def process_youtube_to_presentation(
     else:
         print("字幕なし。画像のみのスライドを生成します。")
 
-    # 一時的な動画ファイルの保存パスを設定
-    unique_id = str(uuid.uuid4())
-    temp_video_path = os.path.join(TEMP_DIR, f"{unique_id}.mp4")
+    # 2. 動画のダウンロード
+    print("動画のダウンロード中...")
+    title = download_video(url, temp_video_path, source_metadata_path)
 
-    try:
-        # 2. 動画のダウンロード
-        print("動画のダウンロード中...")
-        title = download_video(url, temp_video_path)
+    # 3. I フレームを参照したスライド切替の検知と画像抽出
+    print("スライド切替の検知中（I フレームのみ参照）...")
+    scenes, task_temp_dir = detect_static_scenes(
+        temp_video_path,
+        change_level=change_level,
+        comparison_resolution=comparison_resolution
+    )
 
-        # 3. I フレームを参照したスライド切替の検知と画像抽出
-        print("スライド切替の検知中（I フレームのみ参照）...")
-        scenes, task_temp_dir = detect_static_scenes(
-            temp_video_path,
-            change_level=change_level
+    if not scenes:
+        raise ValueError(
+            "スライド画像が検出されませんでした。"
+            "変化レベルを下げて、より小さな変化も検出するようにしてください。"
         )
 
-        if not scenes:
-            raise ValueError(
-                "スライド画像が検出されませんでした。"
-                "変化レベルを下げて、より小さな変化も検出するようにしてください。"
-            )
+    _write_task_metadata(task_temp_dir, source_cache_dir)
 
-        # 4. プレゼンテーションファイルの生成
-        # ファイル名は動画タイトルをベースに生成（特殊文字を除去）
-        safe_title = sanitize_filename(title)
-        output_filename = f"{safe_title}.pptx"
+    # 4. プレゼンテーションファイルの生成
+    # ファイル名は動画タイトルをベースに生成（特殊文字を除去）
+    safe_title = sanitize_filename(title)
+    output_filename = f"{safe_title}.pptx"
+    output_pptx_path = os.path.join(task_temp_dir, output_filename)
+    
+    # 同じファイル名が既に存在する場合は、UUIDの一部を追加
+    counter = 1
+    base_name = output_filename.replace(".pptx", "")
+    while os.path.exists(output_pptx_path):
+        output_filename = f"{base_name}_{counter}.pptx"
         output_pptx_path = os.path.join(task_temp_dir, output_filename)
-        
-        # 同じファイル名が既に存在する場合は、UUIDの一部を追加
-        counter = 1
-        base_name = output_filename.replace(".pptx", "")
-        while os.path.exists(output_pptx_path):
-            output_filename = f"{base_name}_{counter}.pptx"
-            output_pptx_path = os.path.join(task_temp_dir, output_filename)
-            counter += 1
+        counter += 1
 
-        print("PowerPointの生成中...")
-        create_presentation(title, scenes, transcript, output_pptx_path, url=url, ai_summary_enabled=ai_summary_enabled)
+    print("PowerPointの生成中...")
+    create_presentation(title, scenes, transcript, output_pptx_path, url=url, ai_summary_enabled=ai_summary_enabled)
 
-        # フロントエンドに返す結果データを整形
-        formatted_scenes = []
-        for i, scene in enumerate(scenes):
-            current_time = scene["timestamp"]
-            next_time = scenes[i + 1]["timestamp"] if i + 1 < len(scenes) else float('inf')
+    # フロントエンドに返す結果データを整形
+    formatted_scenes = []
+    for i, scene in enumerate(scenes):
+        current_time = scene["timestamp"]
+        next_time = scenes[i + 1]["timestamp"] if i + 1 < len(scenes) else float('inf')
 
-            # テキストの再抽出（プレビュー用）
-            slide_text_list = []
-            for entry in transcript:
-                start = entry["start"]
-                if current_time <= start < next_time:
-                    slide_text_list.append(entry["text"])
-            slide_text = " ".join(slide_text_list).strip()
+        # テキストの再抽出（プレビュー用）
+        slide_text_list = []
+        for entry in transcript:
+            start = entry["start"]
+            if current_time <= start < next_time:
+                slide_text_list.append(entry["text"])
+        slide_text = " ".join(slide_text_list).strip()
 
-            formatted_scenes.append({
-                "id": i,
-                "timestamp": current_time,
-                "image_name": os.path.basename(scene["image_path"]),
-                "text": slide_text or "(字幕なし)"
-            })
+        formatted_scenes.append({
+            "id": i,
+            "timestamp": current_time,
+            "image_name": os.path.basename(scene["image_path"]),
+            "text": slide_text or "(字幕なし)"
+        })
 
-        return {
-            "success": True,
-            "task_id": os.path.basename(task_temp_dir),
-            "title": title,
-            "pptx_filename": output_filename,
-            "scenes": formatted_scenes,
-            "has_transcript": bool(transcript),
-        }
-
-    finally:
-        # ダウンロードした動画ファイル（容量が大きい）は不要になったので削除
-        if os.path.exists(temp_video_path):
-            try:
-                os.remove(temp_video_path)
-                print(f"一時動画ファイルを削除しました: {temp_video_path}")
-            except Exception as e:
-                print(f"一時動画ファイルの削除に失敗しました: {e}")
+    return {
+        "success": True,
+        "task_id": os.path.basename(task_temp_dir),
+        "title": title,
+        "pptx_filename": output_filename,
+        "scenes": formatted_scenes,
+        "has_transcript": bool(transcript),
+    }

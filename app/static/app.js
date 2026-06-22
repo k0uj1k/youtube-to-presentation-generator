@@ -4,19 +4,22 @@ document.addEventListener("DOMContentLoaded", () => {
     const youtubeUrlInput = document.getElementById("youtube-url");
     const sensitivityInput = document.getElementById("sensitivity");
     const sensitivityVal = document.getElementById("sensitivity-val");
+    const comparisonResolutionEnabled = document.getElementById("comparison-resolution-enabled");
+    const comparisonResolutionState = document.getElementById("comparison-resolution-state");
     const aiSummaryEnabled = document.getElementById("ai-summary-enabled");
     const aiSummaryState = document.getElementById("ai-summary-state");
     const toastContainer = document.getElementById("toast-container");
+    const submitBtn = document.getElementById("submit-btn");
+    const submitBtnLabel = submitBtn.querySelector("span:last-child");
     
     const inputSection = document.getElementById("input-section");
-    const loadingSection = document.getElementById("loading-section");
-    const loadingStatus = document.getElementById("loading-status");
     const resultSection = document.getElementById("result-section");
     
     const resultTitle = document.getElementById("result-title");
     const resultSlideCount = document.getElementById("result-slide-count");
     const downloadBtn = document.getElementById("download-btn");
     const previewContainer = document.getElementById("slides-preview-container");
+    const exitBtn = document.getElementById("exit-btn");
 
     // 変化レベル（1〜10）のラベルテキスト
     const changeLevelTexts = {
@@ -44,6 +47,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
     aiSummaryEnabled.addEventListener("change", syncAiSummaryState);
     syncAiSummaryState();
+
+    function syncComparisonResolutionState() {
+        comparisonResolutionState.textContent = comparisonResolutionEnabled.checked ? "480x270" : "160x90";
+    }
+
+    comparisonResolutionEnabled.addEventListener("change", syncComparisonResolutionState);
+    syncComparisonResolutionState();
 
     // 秒数を分:秒フォーマットに変換するヘルパー関数
     function formatTime(seconds) {
@@ -119,12 +129,46 @@ document.addEventListener("DOMContentLoaded", () => {
         return toast;
     }
 
+    function setGeneratingState(isGenerating) {
+        youtubeUrlInput.disabled = isGenerating;
+        sensitivityInput.disabled = isGenerating;
+        comparisonResolutionEnabled.disabled = isGenerating;
+        aiSummaryEnabled.disabled = isGenerating;
+        submitBtn.disabled = isGenerating;
+        exitBtn.disabled = isGenerating;
+        submitBtnLabel.textContent = isGenerating ? "生成中..." : "プレゼンテーションを生成する";
+    }
+
+    exitBtn.addEventListener("click", async () => {
+        exitBtn.disabled = true;
+        showToast("progress", "終了処理中", "動画と字幕のソースキャッシュを削除しています...", 10000, { replace: true, closeable: false });
+
+        try {
+            const response = await fetch("/api/source-cache/clear", {
+                method: "POST"
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(data.detail || "ソースキャッシュの削除に失敗しました。");
+            }
+
+            showToast("success", "終了しました", "ソースキャッシュを削除しました。", 2500, { replace: true });
+            setTimeout(() => {
+                window.location.replace("about:blank");
+            }, 600);
+        } catch (error) {
+            exitBtn.disabled = false;
+            showToast("error", "終了処理に失敗しました", error.message || "ソースキャッシュの削除に失敗しました。", 6000, { replace: true });
+        }
+    });
+
     // フォーム送信処理
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
 
         const url = youtubeUrlInput.value.trim();
         const changeLevel = parseInt(sensitivityInput.value);
+        const comparisonResolution = comparisonResolutionEnabled.checked ? "480x270" : "160x90";
         const aiSummary = aiSummaryEnabled.checked;
 
         if (!url) {
@@ -132,21 +176,12 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
         
-        showToast("info", "処理開始", `変化レベル: ${changeLevelTexts[changeLevel]} / AI要約: ${aiSummary ? "ON" : "OFF"}`);
-
-
-        // UI表示の切り替え
-        inputSection.classList.add("hidden");
+        showToast("info", "処理開始", `変化レベル: ${changeLevelTexts[changeLevel]} / 比較解像度: ${comparisonResolution} / AI要約: ${aiSummary ? "ON" : "OFF"}`);
         resultSection.classList.add("hidden");
-        loadingSection.classList.remove("hidden");
-        loadingStatus.textContent = "YouTube動画を解析しています...";
+        setGeneratingState(true);
 
         try {
-            // 動画解析進捗
-            showToast("progress", "解析中", "YouTube動画を解析しています...", 10000, {replace:true});
-    logMessage("YouTube動画の解析を開始しました");
-            loadingSection.classList.remove("hidden");
-            loadingStatus.textContent = "YouTube動画を解析しています...";
+            showToast("progress", "解析中", "YouTube動画を解析しています...", 15000, {replace:true, closeable:false});
 
             // 生成APIへのリクエスト
             const response = await fetch("/api/generate", {
@@ -157,6 +192,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 body: JSON.stringify({
                     url: url,
                     change_level: changeLevel,
+                    comparison_resolution: comparisonResolution,
                     ai_summary_enabled: aiSummary
                 })
             });
@@ -168,13 +204,11 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             // 生成完了通知
-            showToast("success", "生成完了", `${data.scenes.length}枚のスライドを生成しました`);
+            showToast("success", "生成完了", `${data.scenes.length}枚のスライドを生成しました`, 4000, {replace:true});
 
 
             // 生成完了後の表示処理
-            loadingSection.classList.add("hidden");
             resultSection.classList.remove("hidden");
-            inputSection.classList.remove("hidden"); // 再度別の動画を入力できるように
 
             // サマリー情報の更新
             resultTitle.textContent = data.title;
@@ -214,10 +248,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     imageLoadCount++;
                     if (imageLoadCount === 1) {
                         showToast("info", "画像読み込み中", `${imageLoadCount}/${data.scenes.length}枚読み込み完了`, 3000, {replace:true});
-    logMessage(`画像 ${imageLoadCount}/${data.scenes.length} 読み込み完了`);
                     } else if (imageLoadCount === data.scenes.length) {
                         showToast("success", "すべての画像を読み込みました", `${data.scenes.length}枚のプレビュー準備完了`, 3000, {replace:true});
-    logMessage("すべての画像の読み込みが完了しました");
                     }
                 });
                 
@@ -229,9 +261,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         } catch (error) {
             console.error(error);
-            showToast("error", "エラーが発生しました", error.message);
-            loadingSection.classList.add("hidden");
-            inputSection.classList.remove("hidden");
+            showToast("error", "エラーが発生しました", error.message, 6000, {replace:true});
+        } finally {
+            setGeneratingState(false);
         }
     });
 
@@ -244,17 +276,6 @@ document.addEventListener("DOMContentLoaded", () => {
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;")
             .replace(/'/g, "&#039;");
-    }
-
-    // ログ表示関数
-    function logMessage(msg) {
-        const logContainer = document.getElementById('log-container');
-        if (!logContainer) return;
-        const p = document.createElement('p');
-        p.textContent = msg;
-        logContainer.appendChild(p);
-        // 自動スクロール
-        logContainer.scrollTop = logContainer.scrollHeight;
     }
 
     // トースト表示（外部から呼び出し可能）

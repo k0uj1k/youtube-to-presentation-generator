@@ -7,7 +7,7 @@ echo.
 set VENV_DIR=.venv
 
 if not exist "%VENV_DIR%" (
-    echo [ERROR] Virtual environment not found. Please run setup.bat first.
+    echo [ERROR] Virtual environment not found. Please set up the project first.
     pause
     exit /b 1
 )
