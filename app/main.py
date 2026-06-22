@@ -52,6 +52,50 @@ def download_presentation(task_id: str, filename: str):
         filename=safe_filename
     )
 
+def cleanup_temp_dir(exclude_video_id: str):
+    """
+    指定された動画ID以外の古い動画ファイルや一時タスクディレクトリを削除する。
+    """
+    if not os.path.exists(TEMP_DIR):
+        return
+    import shutil
+    print(f"[CLEANUP] クリーンアップを開始します (除外対象動画ID: {exclude_video_id})")
+    for name in os.listdir(TEMP_DIR):
+        path = os.path.join(TEMP_DIR, name)
+        # 動画ファイルの削除判定
+        if name.startswith("video_") and name.endswith(".mp4"):
+            if name != f"video_{exclude_video_id}.mp4":
+                try:
+                    os.remove(path)
+                    print(f"[CLEANUP] 他の動画ファイルを削除しました: {name}")
+                except Exception as e:
+                    print(f"[CLEANUP] 動画ファイルの削除に失敗: {e}")
+        # タスクディレクトリの削除判定
+        elif os.path.isdir(path):
+            try:
+                shutil.rmtree(path)
+                print(f"[CLEANUP] 古いタスクディレクトリを削除しました: {name}")
+            except Exception as e:
+                print(f"[CLEANUP] タスクディレクトリの削除に失敗: {e}")
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    print("[SHUTDOWN] アプリケーションを終了します。一時データを全削除中...")
+    if os.path.exists(TEMP_DIR):
+        import shutil
+        for name in os.listdir(TEMP_DIR):
+            path = os.path.join(TEMP_DIR, name)
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+                print(f"[SHUTDOWN] 削除しました: {name}")
+            except Exception as e:
+                print(f"[SHUTDOWN] 削除に失敗 {path}: {e}")
+
+
 # プレゼンテーション生成API
 @app.post("/api/generate")
 def generate_presentation_api(req: GenerateRequest):
@@ -59,6 +103,11 @@ def generate_presentation_api(req: GenerateRequest):
     YouTube URL からプレゼンテーションを生成し、スライド情報とダウンロードURLを返す。
     """
     try:
+        # 新しいURL（動画ID）が指定された時点で、古い動画やタスクデータをクリーンアップ（URL更新時）
+        from app.services.youtube_service import extract_video_id
+        video_id = extract_video_id(req.url)
+        cleanup_temp_dir(exclude_video_id=video_id)
+
         result = process_youtube_to_presentation(
             url=req.url,
             change_level=req.change_level,
@@ -76,6 +125,7 @@ def generate_presentation_api(req: GenerateRequest):
         import traceback
         print(f"ERROR: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="処理中に予期しないエラーが発生しました。ログを確認してください。")
+
 
 
 def _translate_error(error_msg: str) -> str:

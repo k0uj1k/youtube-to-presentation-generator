@@ -64,8 +64,6 @@ document.addEventListener("DOMContentLoaded", () => {
             setTimeout(() => old.toast.remove(), 300);
             delete activeToasts[type];
         }
-        // 重なり防止のため既存トーストをすべて削除
-        toastContainer.querySelectorAll('.toast').forEach(t => t.remove());
         const toast = document.createElement("div");
         toast.className = `toast toast-${type}`;
         // アイコン設定
@@ -144,7 +142,6 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
             // 動画解析進捗
             showToast("progress", "解析中", "YouTube動画を解析しています...", 10000, {replace:true});
-    logMessage("YouTube動画の解析を開始しました");
             loadingSection.classList.remove("hidden");
             loadingStatus.textContent = "YouTube動画を解析しています...";
 
@@ -214,10 +211,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     imageLoadCount++;
                     if (imageLoadCount === 1) {
                         showToast("info", "画像読み込み中", `${imageLoadCount}/${data.scenes.length}枚読み込み完了`, 3000, {replace:true});
-    logMessage(`画像 ${imageLoadCount}/${data.scenes.length} 読み込み完了`);
                     } else if (imageLoadCount === data.scenes.length) {
                         showToast("success", "すべての画像を読み込みました", `${data.scenes.length}枚のプレビュー準備完了`, 3000, {replace:true});
-    logMessage("すべての画像の読み込みが完了しました");
                     }
                 });
                 
@@ -244,17 +239,6 @@ document.addEventListener("DOMContentLoaded", () => {
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;")
             .replace(/'/g, "&#039;");
-    }
-
-    // ログ表示関数
-    function logMessage(msg) {
-        const logContainer = document.getElementById('log-container');
-        if (!logContainer) return;
-        const p = document.createElement('p');
-        p.textContent = msg;
-        logContainer.appendChild(p);
-        // 自動スクロール
-        logContainer.scrollTop = logContainer.scrollHeight;
     }
 
     // トースト表示（外部から呼び出し可能）

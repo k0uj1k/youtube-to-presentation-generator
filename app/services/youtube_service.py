@@ -25,16 +25,16 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # 変化レベル（1〜10）を MAD 閾値に変換するテーブル
 # レベル 1 = 非常に敏感（わずかな変化も検知）、10 = 鈍感（大きな変化のみ検知）
 _CHANGE_LEVEL_TO_THRESHOLD = {
-    1:  5.0,
-    2: 10.0,
-    3: 20.0,
-    4: 35.0,
-    5: 50.0,
-    6: 65.0,
-    7: 80.0,
-    8: 100.0,
-    9: 130.0,
-   10: 180.0,
+    1:   1.0,
+    2:   3.0,
+    3:   6.0,
+    4:  10.0,
+    5:  15.0,
+    6:  25.0,
+    7:  40.0,
+    8:  60.0,
+    9:  80.0,
+   10: 100.0,
 }
 
 
@@ -127,17 +127,31 @@ def get_transcript(url: str, video_id: str) -> list:
 def download_video(url: str, output_path: str) -> str:
     """
     yt-dlpを使用して画像抽出用に高精細な動画（例: 1080p）をダウンロードする。
+    動画が既に存在する場合はダウンロードをスキップし、タイトルのみ取得して返す。
     """
-    ydl_opts = {
-        'format': 'bestvideo[height<=1080][ext=mp4]/best[height<=1080][ext=mp4]/best[ext=mp4]',  # 高画質なスライド画像抽出のため1080p以下の最高画質MP4を選択
-        'outtmpl': output_path,
+    base_opts = {
         'quiet': True,
         'no_warnings': True,
     }
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            return info.get('title', 'YouTube Video')
+        with yt_dlp.YoutubeDL(base_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            title = info.get('title', 'YouTube Video')
+
+        if not os.path.exists(output_path):
+            print(f"動画をダウンロードします: {output_path}")
+            ydl_opts = {
+                'format': 'bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=1080][vcodec^=avc1]/best[ext=mp4]',
+                'outtmpl': output_path,
+                'quiet': True,
+                'no_warnings': True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.extract_info(url, download=True)
+        else:
+            print(f"[INFO] 動画ファイルは既に存在します。ダウンロードをスキップします: {output_path}")
+
+        return title
     except yt_dlp.utils.DownloadError as e:
         error_msg = str(e)
         if "Video unavailable" in error_msg:
@@ -553,12 +567,11 @@ def process_youtube_to_presentation(
     else:
         print("字幕なし。画像のみのスライドを生成します。")
 
-    # 一時的な動画ファイルの保存パスを設定
-    unique_id = str(uuid.uuid4())
-    temp_video_path = os.path.join(TEMP_DIR, f"{unique_id}.mp4")
+    # 動画IDに対応した固定の保存パスを設定（再ダウンロード防止）
+    temp_video_path = os.path.join(TEMP_DIR, f"video_{video_id}.mp4")
 
     try:
-        # 2. 動画のダウンロード
+        # 2. 動画のダウンロード（存在する場合はスキップ）
         print("動画のダウンロード中...")
         title = download_video(url, temp_video_path)
 
@@ -622,11 +635,6 @@ def process_youtube_to_presentation(
             "has_transcript": bool(transcript),
         }
 
-    finally:
-        # ダウンロードした動画ファイル（容量が大きい）は不要になったので削除
-        if os.path.exists(temp_video_path):
-            try:
-                os.remove(temp_video_path)
-                print(f"一時動画ファイルを削除しました: {temp_video_path}")
-            except Exception as e:
-                print(f"一時動画ファイルの削除に失敗しました: {e}")
+    except Exception as e:
+        print(f"処理中にエラーが発生しました: {e}")
+        raise e
