@@ -237,7 +237,7 @@ document.addEventListener("DOMContentLoaded", () => {
             progressFill.classList.add("active");
             progressFill.style.width = "0%";
 
-            pollingInterval = setInterval(async () => {
+            const pollTask = async () => {
                 if (!currentTaskId) return;
 
                 try {
@@ -248,23 +248,59 @@ document.addEventListener("DOMContentLoaded", () => {
                     const statusData = await statusRes.json();
 
                     // 進捗率と詳細ステータスの更新
-                    progressFill.style.width = statusData.progress + "%";
+                    progressFill.style.width = (statusData.progress || 0) + "%";
                     loadingStatus.textContent = statusData.detail || "動画データを解析しています...";
 
                     // 新しいログの出力
-                    if (statusData.logs && statusData.logs.length > displayedLogCount) {
-                        for (let i = displayedLogCount; i < statusData.logs.length; i++) {
-                            logMessage(statusData.logs[i]);
+                    const logs = statusData.logs || [];
+                    if (logs.length > displayedLogCount) {
+                        for (let i = displayedLogCount; i < logs.length; i++) {
+                            logMessage(logs[i]);
                         }
-                        displayedLogCount = statusData.logs.length;
+                        displayedLogCount = logs.length;
                     }
 
                     // 状態に応じた処理
+                    if (statusData.status === "waiting_confirm") {
+                        // 一時的にポーリングを停止
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+
+                        const confirmed = confirm("スライドが100枚を超えます　中止しますか？");
+                        const action = confirmed ? "abort" : "continue";
+
+                        try {
+                            const confirmRes = await fetch(`/api/confirm/${currentTaskId}/${action}`, {
+                                method: "POST"
+                            });
+                            if (!confirmRes.ok) {
+                                throw new Error("確認応答の送信に失敗しました。");
+                            }
+
+                            if (action === "abort") {
+                                showToast("info", "処理中止", "処理を中止しました。");
+                                resetUI();
+                                currentTaskId = null;
+                            } else {
+                                // 継続ならポーリング再開
+                                pollingInterval = setInterval(pollTask, 1000);
+                            }
+                        } catch (confirmErr) {
+                            console.error(confirmErr);
+                            showToast("error", "エラーが発生しました", confirmErr.message);
+                            resetUI();
+                            currentTaskId = null;
+                        }
+                        return;
+                    }
+
                     if (statusData.status === "completed") {
                         stopPolling();
                         
-                        const resultData = statusData.result;
-                        showToast("success", "生成完了", `${resultData.scenes.length}枚のスライドを生成しました`);
+                        const resultData = statusData.result || {};
+                        const scenes = resultData.scenes || [];
+                        const scenesLength = scenes.length;
+                        showToast("success", "生成完了", `${scenesLength}枚のスライドを生成しました`);
 
                         // 生成完了後の表示処理
                         loadingSection.classList.add("hidden");
@@ -272,17 +308,17 @@ document.addEventListener("DOMContentLoaded", () => {
                         inputSection.classList.remove("hidden");
 
                         // サマリー情報の更新
-                        resultTitle.textContent = resultData.title;
-                        resultSlideCount.textContent = `全 ${resultData.scenes.length} 枚のスライドを生成しました`;
+                        resultTitle.textContent = resultData.title || "無題";
+                        resultSlideCount.textContent = `全 ${scenesLength} 枚のスライドを生成しました`;
                         
                         // ダウンロードリンクの設定
                         downloadBtn.href = `/api/download/${resultData.task_id}/${resultData.pptx_filename}`;
-                        downloadBtn.download = resultData.title + ".pptx";
+                        downloadBtn.download = (resultData.title || "presentation") + ".pptx";
 
                         // プレビューカードの動的生成
                         previewContainer.innerHTML = "";
                         let imageLoadCount = 0;
-                        resultData.scenes.forEach((scene) => {
+                        scenes.forEach((scene) => {
                             const card = document.createElement("div");
                             card.className = "slide-card";
 
@@ -306,10 +342,10 @@ document.addEventListener("DOMContentLoaded", () => {
                             img.addEventListener("load", () => {
                                 imageLoadCount++;
                                 if (imageLoadCount === 1) {
-                                    showToast("info", "画像読み込み中", `${imageLoadCount}/${resultData.scenes.length}枚読み込み完了`, 3000, {replace:true});
-                                    logMessage(`画像 ${imageLoadCount}/${resultData.scenes.length} 読み込み完了`);
-                                } else if (imageLoadCount === resultData.scenes.length) {
-                                    showToast("success", "すべての画像を読み込みました", `${resultData.scenes.length}枚のプレビュー準備完了`, 3000, {replace:true});
+                                    showToast("info", "画像読み込み中", `${imageLoadCount}/${scenesLength}枚読み込み完了`, 3000, {replace:true});
+                                    logMessage(`画像 ${imageLoadCount}/${scenesLength} 読み込み完了`);
+                                } else if (imageLoadCount === scenesLength) {
+                                    showToast("success", "すべての画像を読み込みました", `${scenesLength}枚のプレビュー準備完了`, 3000, {replace:true});
                                     logMessage("すべての画像の読み込みが完了しました");
                                 }
                             });
@@ -335,7 +371,9 @@ document.addEventListener("DOMContentLoaded", () => {
                     stopPolling();
                     resetUI();
                 }
-            }, 1000);
+            };
+
+            pollingInterval = setInterval(pollTask, 1000);
 
         } catch (error) {
             console.error(error);

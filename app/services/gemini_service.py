@@ -81,45 +81,50 @@ KEY_POINTS:
 
 MAIN_MESSAGE: このスライドで最も言いたいことをここに書いてください。
 """
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt
-            )
-            response_text = response.text.strip()
+        import time
+        max_retries = 3
+        backoff = 10.0
 
-            # KEY_POINTS 抽出
-            key_points = []
-            if "KEY_POINTS:" in response_text:
-                kp_start = response_text.find("KEY_POINTS:") + len("KEY_POINTS:")
-                mm_start = response_text.find("MAIN_MESSAGE:")
-                if mm_start == -1:
-                    mm_start = len(response_text)
-                kp_section = response_text[kp_start:mm_start].strip()
-                for line in kp_section.split("\n"):
-                    line = line.strip()
-                    if line.startswith("- "):
-                        key_points.append(line[2:].strip())
-                    elif line:
-                        key_points.append(line)
+        for attempt in range(max_retries):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt
+                )
+                response_text = response.text.strip()
 
-            # MAIN_MESSAGE 抽出
-            main_message = ""
-            if "MAIN_MESSAGE:" in response_text:
-                mm_start = response_text.find("MAIN_MESSAGE:") + len("MAIN_MESSAGE:")
-                main_message = response_text[mm_start:].strip().split("\n")[0].strip()
+                # KEY_POINTS 抽出
+                key_points = []
+                if "KEY_POINTS:" in response_text:
+                    kp_start = response_text.find("KEY_POINTS:") + len("KEY_POINTS:")
+                    mm_start = response_text.find("MAIN_MESSAGE:")
+                    if mm_start == -1:
+                        mm_start = len(response_text)
+                    kp_section = response_text[kp_start:mm_start].strip()
+                    for line in kp_section.split("\n"):
+                        line = line.strip()
+                        if line.startswith("- "):
+                            key_points.append(line[2:].strip())
+                        elif line:
+                            key_points.append(line)
 
-            return {
-                "key_points": key_points[:5],
-                "main_message": main_message or "(内容を自動生成できませんでした)"
-            }
-        except Exception as e:
-            print(f"Gemini API エラー: {e}")
-            return {
-                "key_points": [],
-                "main_message": "(要約の生成に失敗しました)",
-                "error": str(e)
-            }
+                # MAIN_MESSAGE 抽出
+                main_message = ""
+                if "MAIN_MESSAGE:" in response_text:
+                    mm_start = response_text.find("MAIN_MESSAGE:") + len("MAIN_MESSAGE:")
+                    main_message = response_text[mm_start:].strip().split("\n")[0].strip()
+
+                return {
+                    "key_points": key_points[:5],
+                    "main_message": main_message or "(内容を自動生成できませんでした)"
+                }
+            except Exception as e:
+                print(f"Gemini API エラー (試行 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(backoff)
+                    backoff *= 2
+                else:
+                    raise e
 
 def get_summarizer() -> GeminiSummarizer:
     """グローバルな GeminiSummarizer インスタンスを取得する。

@@ -190,7 +190,27 @@ def cancel_task(task_id: str):
         raise HTTPException(status_code=404, detail="指定されたタスクが見つかりません。")
         
     task_state.cancel_event.set()
+    task_state.confirm_response = "abort"
+    task_state.confirm_event.set()
     task_state.status = "cancelled"
+    return {"success": True}
+
+
+# ユーザーの確認アクションを受け取るAPI
+@app.post("/api/confirm/{task_id}/{action}")
+def confirm_task(task_id: str, action: str):
+    """
+    スライド数超過時の一時停止に対するユーザーの確認アクションを受け取る。
+    """
+    task_state = tasks.get(task_id)
+    if not task_state:
+        raise HTTPException(status_code=404, detail="指定されたタスクが見つかりません。")
+        
+    if action not in ["abort", "continue"]:
+        raise HTTPException(status_code=400, detail="無効なアクションです。")
+        
+    task_state.confirm_response = action
+    task_state.confirm_event.set()
     return {"success": True}
 
 

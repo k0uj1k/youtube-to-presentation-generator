@@ -15,6 +15,8 @@ class TaskState:
         self.result: Optional[dict] = None  # 完了時の実行結果
         self.error: Optional[str] = None    # エラー発生時のエラーメッセージ
         self.cancel_event = threading.Event()  # 中止用イベント
+        self.confirm_event = threading.Event()  # 確認用イベント
+        self.confirm_response: Optional[str] = None  # 確認応答 ("abort" or "continue")
 
     def log(self, message: str, progress: Optional[int] = None):
         """ログを記録し、進捗率を更新する。キャンセルされている場合は例外を投げる"""

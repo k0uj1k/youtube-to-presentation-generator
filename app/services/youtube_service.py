@@ -619,6 +619,19 @@ def process_youtube_to_presentation(
                 "変化レベルを下げて、より小さな変化も検出するようにしてください。"
             )
 
+        # スライド枚数が100枚を超えたら、確認ダイアログを表示するため一時停止する
+        if len(scenes) > 100:
+            if task_state:
+                task_state.status = "waiting_confirm"
+                task_state.log(f"スライド数が100枚を超えました（現在 {len(scenes)} 枚）。一時停止中...", task_state.progress)
+                task_state.confirm_event.clear()
+                task_state.confirm_event.wait()
+                if task_state.confirm_response == "abort":
+                    raise TaskCancelledException("スライド数が100枚を超えたため、ユーザーによって中止されました。")
+                else:
+                    task_state.status = "processing"
+                    task_state.log("処理を継続します。", task_state.progress)
+
         # 4. プレゼンテーションファイルの生成
         # ファイル名は動画タイトルをベースに生成（特殊文字を除去）
         safe_title = sanitize_filename(title)
