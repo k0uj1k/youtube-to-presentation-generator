@@ -117,6 +117,66 @@ document.addEventListener("DOMContentLoaded", () => {
         return toast;
     }
 
+    // キャンセルボタンの取得と状態変数
+    const cancelBtn = document.getElementById("cancel-btn");
+    let currentTaskId = null;
+    let pollingInterval = null;
+
+    // キャンセル処理
+    cancelBtn.addEventListener("click", async () => {
+        if (!currentTaskId) return;
+        
+        cancelBtn.disabled = true;
+        cancelBtn.querySelector("span:last-child").textContent = "中止しています...";
+        
+        try {
+            const response = await fetch(`/api/cancel/${currentTaskId}`, {
+                method: "POST"
+            });
+            if (response.ok) {
+                showToast("info", "処理中止", "処理の中止をリクエストしました。");
+            }
+        } catch (error) {
+            console.error("キャンセルエラー:", error);
+        } finally {
+            // ポーリング停止とUIリセット
+            stopPolling();
+            resetUI();
+        }
+    });
+
+    function resetUI() {
+        loadingSection.classList.add("hidden");
+        inputSection.classList.remove("hidden");
+        // キャンセルボタンの活性化状態をリセット
+        cancelBtn.disabled = false;
+        cancelBtn.querySelector("span:last-child").textContent = "生成を中止する";
+        const progressFill = document.getElementById("progress-fill");
+        progressFill.classList.remove("active");
+        progressFill.style.width = "30%";
+        // ログコンテナもクリア
+        const logContainer = document.getElementById('log-container');
+        if (logContainer) logContainer.innerHTML = "";
+    }
+
+    function stopPolling() {
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+        }
+        currentTaskId = null;
+    }
+
+    function logMessage(msg) {
+        const logContainer = document.getElementById('log-container');
+        if (logContainer) {
+            const div = document.createElement('div');
+            div.textContent = `> ${msg}`;
+            logContainer.appendChild(div);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+    }
+
     // フォーム送信処理
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -132,20 +192,26 @@ document.addEventListener("DOMContentLoaded", () => {
         
         showToast("info", "処理開始", `変化レベル: ${changeLevelTexts[changeLevel]} / AI要約: ${aiSummary ? "ON" : "OFF"}`);
 
-
         // UI表示の切り替え
         inputSection.classList.add("hidden");
         resultSection.classList.add("hidden");
         loadingSection.classList.remove("hidden");
-        loadingStatus.textContent = "YouTube動画を解析しています...";
+        loadingStatus.textContent = "処理を開始しています...";
+        
+        const logContainer = document.getElementById('log-container');
+        if (logContainer) logContainer.innerHTML = "";
+        
+        const progressFill = document.getElementById("progress-fill");
+        progressFill.classList.remove("active");
+        progressFill.style.width = "30%";
+
+        cancelBtn.disabled = false;
+        cancelBtn.querySelector("span:last-child").textContent = "生成を中止する";
 
         try {
-            // 動画解析進捗
-            showToast("progress", "解析中", "YouTube動画を解析しています...", 10000, {replace:true});
-            loadingSection.classList.remove("hidden");
-            loadingStatus.textContent = "YouTube動画を解析しています...";
+            logMessage("YouTube動画の解析を開始しました");
 
-            // 生成APIへのリクエスト
+            // 生成APIへのリクエスト (タスクIDを即座に受け取る)
             const response = await fetch("/api/generate", {
                 method: "POST",
                 headers: {
@@ -161,72 +227,121 @@ document.addEventListener("DOMContentLoaded", () => {
             const data = await response.json();
 
             if (!response.ok) {
-                throw new Error(data.detail || "プレゼンテーションの生成に失敗しました。");
+                throw new Error(data.detail || "プレゼンテーションの生成開始に失敗しました。");
             }
 
-            // 生成完了通知
-            showToast("success", "生成完了", `${data.scenes.length}枚のスライドを生成しました`);
-
-
-            // 生成完了後の表示処理
-            loadingSection.classList.add("hidden");
-            resultSection.classList.remove("hidden");
-            inputSection.classList.remove("hidden"); // 再度別の動画を入力できるように
-
-            // サマリー情報の更新
-            resultTitle.textContent = data.title;
-            resultSlideCount.textContent = `全 ${data.scenes.length} 枚のスライドを生成しました`;
+            currentTaskId = data.task_id;
             
-            // ダウンロードリンクの設定
-            downloadBtn.href = `/api/download/${data.task_id}/${data.pptx_filename}`;
-            downloadBtn.download = data.title + ".pptx";
+            // ポーリング開始
+            let displayedLogCount = 0;
+            progressFill.classList.add("active");
+            progressFill.style.width = "0%";
 
-            // プレビューカードの動的生成
-            previewContainer.innerHTML = "";
-            let imageLoadCount = 0;
-            data.scenes.forEach((scene) => {
-                const card = document.createElement("div");
-                card.className = "slide-card";
+            pollingInterval = setInterval(async () => {
+                if (!currentTaskId) return;
 
-                // 画像配信用エンドポイントのURL
-                const imageUrl = `/api/images/${data.task_id}/${scene.image_name}`;
-
-                card.innerHTML = `
-                    <div class="slide-image-wrapper">
-                        <span class="slide-badge">Slide ${scene.id + 1}</span>
-                        <img src="${imageUrl}" alt="Slide ${scene.id + 1}" loading="lazy">
-                    </div>
-                    <div class="slide-content">
-                        <div class="slide-timestamp">
-                            <span class="material-icons-round" style="font-size: 1rem;">schedule</span>
-                            <span>${formatTime(scene.timestamp)}</span>
-                        </div>
-                        <div class="slide-text">${escapeHtml(scene.text)}</div>
-                    </div>
-                `;
-                
-                // 画像読み込み監視
-                const img = card.querySelector("img");
-                img.addEventListener("load", () => {
-                    imageLoadCount++;
-                    if (imageLoadCount === 1) {
-                        showToast("info", "画像読み込み中", `${imageLoadCount}/${data.scenes.length}枚読み込み完了`, 3000, {replace:true});
-                    } else if (imageLoadCount === data.scenes.length) {
-                        showToast("success", "すべての画像を読み込みました", `${data.scenes.length}枚のプレビュー準備完了`, 3000, {replace:true});
+                try {
+                    const statusRes = await fetch(`/api/status/${currentTaskId}`);
+                    if (!statusRes.ok) {
+                        throw new Error("ステータスの取得に失敗しました。");
                     }
-                });
-                
-                previewContainer.appendChild(card);
-            });
+                    const statusData = await statusRes.json();
 
-            // 結果画面までスムーススクロール
-            resultSection.scrollIntoView({ behavior: "smooth" });
+                    // 進捗率と詳細ステータスの更新
+                    progressFill.style.width = statusData.progress + "%";
+                    loadingStatus.textContent = statusData.detail || "動画データを解析しています...";
+
+                    // 新しいログの出力
+                    if (statusData.logs && statusData.logs.length > displayedLogCount) {
+                        for (let i = displayedLogCount; i < statusData.logs.length; i++) {
+                            logMessage(statusData.logs[i]);
+                        }
+                        displayedLogCount = statusData.logs.length;
+                    }
+
+                    // 状態に応じた処理
+                    if (statusData.status === "completed") {
+                        stopPolling();
+                        
+                        const resultData = statusData.result;
+                        showToast("success", "生成完了", `${resultData.scenes.length}枚のスライドを生成しました`);
+
+                        // 生成完了後の表示処理
+                        loadingSection.classList.add("hidden");
+                        resultSection.classList.remove("hidden");
+                        inputSection.classList.remove("hidden");
+
+                        // サマリー情報の更新
+                        resultTitle.textContent = resultData.title;
+                        resultSlideCount.textContent = `全 ${resultData.scenes.length} 枚のスライドを生成しました`;
+                        
+                        // ダウンロードリンクの設定
+                        downloadBtn.href = `/api/download/${resultData.task_id}/${resultData.pptx_filename}`;
+                        downloadBtn.download = resultData.title + ".pptx";
+
+                        // プレビューカードの動的生成
+                        previewContainer.innerHTML = "";
+                        let imageLoadCount = 0;
+                        resultData.scenes.forEach((scene) => {
+                            const card = document.createElement("div");
+                            card.className = "slide-card";
+
+                            const imageUrl = `/api/images/${resultData.task_id}/${scene.image_name}`;
+
+                            card.innerHTML = `
+                                <div class="slide-image-wrapper">
+                                    <span class="slide-badge">Slide ${scene.id + 1}</span>
+                                    <img src="${imageUrl}" alt="Slide ${scene.id + 1}" loading="lazy">
+                                </div>
+                                <div class="slide-content">
+                                    <div class="slide-timestamp">
+                                        <span class="material-icons-round" style="font-size: 1rem;">schedule</span>
+                                        <span>${formatTime(scene.timestamp)}</span>
+                                    </div>
+                                    <div class="slide-text">${escapeHtml(scene.text)}</div>
+                                </div>
+                            `;
+                            
+                            const img = card.querySelector("img");
+                            img.addEventListener("load", () => {
+                                imageLoadCount++;
+                                if (imageLoadCount === 1) {
+                                    showToast("info", "画像読み込み中", `${imageLoadCount}/${resultData.scenes.length}枚読み込み完了`, 3000, {replace:true});
+                                    logMessage(`画像 ${imageLoadCount}/${resultData.scenes.length} 読み込み完了`);
+                                } else if (imageLoadCount === resultData.scenes.length) {
+                                    showToast("success", "すべての画像を読み込みました", `${resultData.scenes.length}枚のプレビュー準備完了`, 3000, {replace:true});
+                                    logMessage("すべての画像の読み込みが完了しました");
+                                }
+                            });
+                            
+                            previewContainer.appendChild(card);
+                        });
+
+                        // 結果画面までスムーススクロール
+                        resultSection.scrollIntoView({ behavior: "smooth" });
+
+                    } else if (statusData.status === "failed") {
+                        stopPolling();
+                        throw new Error(statusData.error || "プレゼンテーションの生成に失敗しました。");
+                    } else if (statusData.status === "cancelled") {
+                        stopPolling();
+                        showToast("info", "処理中止", "処理を中止しました。");
+                        resetUI();
+                    }
+
+                } catch (err) {
+                    console.error(err);
+                    showToast("error", "エラーが発生しました", err.message);
+                    stopPolling();
+                    resetUI();
+                }
+            }, 1000);
 
         } catch (error) {
             console.error(error);
             showToast("error", "エラーが発生しました", error.message);
-            loadingSection.classList.add("hidden");
-            inputSection.classList.remove("hidden");
+            stopPolling();
+            resetUI();
         }
     });
 

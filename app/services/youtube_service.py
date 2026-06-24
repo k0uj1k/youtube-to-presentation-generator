@@ -14,6 +14,7 @@ from pptx.dml.color import RGBColor
 import unicodedata
 from dotenv import load_dotenv
 from .gemini_service import GeminiSummarizer
+from .task_manager import TaskCancelledException
 
 # .env ファイルを読み込む
 load_dotenv()
@@ -251,7 +252,8 @@ def get_keyframe_timestamps_cached(video_path: str, cap: cv2.VideoCapture) -> li
 
 def detect_static_scenes(
     video_path: str,
-    change_level: int = 5
+    change_level: int = 5,
+    task_state = None
 ) -> tuple:
     """
     I フレーム（キーフレーム）を順に参照し、基準フレームとの差分が
@@ -323,6 +325,13 @@ def detect_static_scenes(
     print("各Iフレームを基準フレームと比較中...")
     try:
         for i, ts in enumerate(keyframe_times):
+            if task_state:
+                task_state.check_cancelled()
+                # 30% から 80% の間で進捗を計算
+                progress = 30 + int((i + 1) / len(keyframe_times) * 50)
+                if (i + 1) % max(1, len(keyframe_times) // 10) == 0 or i == 0 or i == len(keyframe_times) - 1:
+                    task_state.log(f"スライド画像を抽出中... ({i+1}/{len(keyframe_times)} フレーム解析)", progress)
+
             if (i + 1) % max(1, len(keyframe_times) // 10) == 0:
                 print(f"  進捗: {i+1}/{len(keyframe_times)} ({(i+1)*100//len(keyframe_times)}%)")
 
@@ -363,7 +372,8 @@ def create_presentation(
     transcript: list,
     output_pptx_path: str,
     url: str | None = None,
-    ai_summary_enabled: bool = False
+    ai_summary_enabled: bool = False,
+    task_state = None
 ):
     """
     抽出した画像と文字起こしテキストをマッピングし、PowerPointプレゼンテーションを生成する。
@@ -422,6 +432,12 @@ def create_presentation(
     has_transcript = bool(transcript)
 
     for i, scene in enumerate(scenes):
+        if task_state:
+            task_state.check_cancelled()
+            # 80% から 95% の間で進捗を計算
+            progress = 80 + int((i + 1) / len(scenes) * 15)
+            task_state.log(f"PowerPointスライドを作成中... ({i+1}/{len(scenes)}枚目)", progress)
+
         current_time = scene["timestamp"]
         next_time = scenes[i + 1]["timestamp"] if i + 1 < len(scenes) else float('inf')
 
@@ -542,7 +558,8 @@ def create_presentation(
 def process_youtube_to_presentation(
     url: str,
     change_level: int = 5,
-    ai_summary_enabled: bool = False
+    ai_summary_enabled: bool = False,
+    task_state = None
 ) -> dict:
     """
     YouTube URL からプレゼンテーションを生成する一連の処理を実行する。
@@ -560,26 +577,40 @@ def process_youtube_to_presentation(
     video_id = extract_video_id(url)
 
     # 1. 字幕の取得（失敗しても処理続行）
+    if task_state:
+        task_state.log("YouTube動画の字幕を取得中...", 5)
     print("字幕の取得中...")
     transcript = get_transcript(url, video_id)
     if transcript:
         print(f"字幕を取得しました（{len(transcript)} エントリ）。")
+        if task_state:
+            task_state.log(f"字幕を取得しました（{len(transcript)} エントリ）。", 10)
     else:
         print("字幕なし。画像のみのスライドを生成します。")
+        if task_state:
+            task_state.log("字幕が見つかりませんでした。画像のみのスライドを生成します。", 10)
 
     # 動画IDに対応した固定の保存パスを設定（再ダウンロード防止）
     temp_video_path = os.path.join(TEMP_DIR, f"video_{video_id}.mp4")
+    task_temp_dir = None
 
     try:
         # 2. 動画のダウンロード（存在する場合はスキップ）
+        if task_state:
+            task_state.log("動画のダウンロードを開始しました...", 15)
         print("動画のダウンロード中...")
         title = download_video(url, temp_video_path)
+        if task_state:
+            task_state.log(f"動画のダウンロードが完了しました: {title}", 30)
 
         # 3. I フレームを参照したスライド切替の検知と画像抽出
+        if task_state:
+            task_state.log("動画の解析（Iフレーム抽出）を開始しました...", 30)
         print("スライド切替の検知中（I フレームのみ参照）...")
         scenes, task_temp_dir = detect_static_scenes(
             temp_video_path,
-            change_level=change_level
+            change_level=change_level,
+            task_state=task_state
         )
 
         if not scenes:
@@ -603,9 +634,13 @@ def process_youtube_to_presentation(
             counter += 1
 
         print("PowerPointの生成中...")
-        create_presentation(title, scenes, transcript, output_pptx_path, url=url, ai_summary_enabled=ai_summary_enabled)
+        if task_state:
+            task_state.log("PowerPointプレゼンテーションの生成を開始しました...", 80)
+        create_presentation(title, scenes, transcript, output_pptx_path, url=url, ai_summary_enabled=ai_summary_enabled, task_state=task_state)
 
         # フロントエンドに返す結果データを整形
+        if task_state:
+            task_state.log("結果データを生成中...", 95)
         formatted_scenes = []
         for i, scene in enumerate(scenes):
             current_time = scene["timestamp"]
@@ -626,7 +661,7 @@ def process_youtube_to_presentation(
                 "text": slide_text or "(字幕なし)"
             })
 
-        return {
+        result = {
             "success": True,
             "task_id": os.path.basename(task_temp_dir),
             "title": title,
@@ -635,6 +670,17 @@ def process_youtube_to_presentation(
             "has_transcript": bool(transcript),
         }
 
+        if task_state:
+            task_state.log("プレゼンテーションの生成が完了しました！", 100)
+
+        return result
+
     except Exception as e:
-        print(f"処理中にエラーが発生しました: {e}")
+        import shutil
+        if task_temp_dir and os.path.exists(task_temp_dir):
+            try:
+                shutil.rmtree(task_temp_dir)
+                print(f"エラー発生により一時ディレクトリをクリーンアップしました: {task_temp_dir}")
+            except Exception as clean_err:
+                print(f"一時ディレクトリのクリーンアップに失敗: {clean_err}")
         raise e

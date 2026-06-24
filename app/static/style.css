@@ -522,6 +522,17 @@ input[type="range"]::-webkit-slider-thumb:hover {
     transform: translateY(1px);
 }
 
+.btn-danger {
+    background: linear-gradient(135deg, #ef4444, #b91c1c);
+    color: white;
+    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.3);
+}
+
+.btn-danger:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 24px rgba(239, 68, 68, 0.5);
+}
+
 /* ローディングパネル */
 .loading-panel {
     display: flex;
@@ -574,6 +585,12 @@ input[type="range"]::-webkit-slider-thumb:hover {
     background: var(--primary-gradient);
     border-radius: 4px;
     animation: loading-bar 2s infinite ease-in-out;
+}
+
+.progress-bar-fill.active {
+    animation: none;
+    width: 0%;
+    transition: width 0.3s ease;
 }
 
 @keyframes loading-bar {

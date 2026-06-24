@@ -1,9 +1,12 @@
 import os
+import threading
+import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from app.services.youtube_service import process_youtube_to_presentation, TEMP_DIR
+from app.services.task_manager import tasks, TaskState, TaskCancelledException
 
 # .env ファイルから環境変数を読み込む
 from dotenv import load_dotenv
@@ -95,36 +98,100 @@ def shutdown_event():
             except Exception as e:
                 print(f"[SHUTDOWN] 削除に失敗 {path}: {e}")
 
+def _run_generation_task(task_id: str, url: str, change_level: int, ai_summary_enabled: bool):
+    """バックグラウンドでプレゼンテーション生成を実行するスレッド用関数"""
+    task_state = tasks.get(task_id)
+    if not task_state:
+        return
+        
+    try:
+        result = process_youtube_to_presentation(
+            url=url,
+            change_level=change_level,
+            ai_summary_enabled=ai_summary_enabled,
+            task_state=task_state
+        )
+        task_state.result = result
+        task_state.status = "completed"
+    except TaskCancelledException as tce:
+        task_state.status = "cancelled"
+        task_state.error = str(tce)
+    except ValueError as ve:
+        # ユーザーの入力エラー（字幕なし、URLエラーなど）
+        error_msg = str(ve)
+        user_friendly_msg = _translate_error(error_msg)
+        task_state.status = "failed"
+        task_state.error = user_friendly_msg
+    except Exception as e:
+        # サーバー内部エラー
+        import traceback
+        print(f"ERROR in task {task_id}: {traceback.format_exc()}")
+        task_state.status = "failed"
+        task_state.error = "処理中に予期しないエラーが発生しました。サーバーのログを確認してください。"
+
 
 # プレゼンテーション生成API
 @app.post("/api/generate")
 def generate_presentation_api(req: GenerateRequest):
     """
-    YouTube URL からプレゼンテーションを生成し、スライド情報とダウンロードURLを返す。
+    YouTube URL からプレゼンテーションを生成する非同期タスクを開始し、タスクIDを返す。
     """
     try:
         # 新しいURL（動画ID）が指定された時点で、古い動画やタスクデータをクリーンアップ（URL更新時）
         from app.services.youtube_service import extract_video_id
         video_id = extract_video_id(req.url)
         cleanup_temp_dir(exclude_video_id=video_id)
-
-        result = process_youtube_to_presentation(
-            url=req.url,
-            change_level=req.change_level,
-            ai_summary_enabled=req.ai_summary_enabled
-        )
-        return result
-    except ValueError as ve:
-        # ユーザーの入力エラー（字幕なし、URLエラーなど）
-        error_msg = str(ve)
-        # ユーザーフレンドリーなメッセージに変換
-        user_friendly_msg = _translate_error(error_msg)
-        raise HTTPException(status_code=400, detail=user_friendly_msg)
     except Exception as e:
-        # サーバー内部エラー
-        import traceback
-        print(f"ERROR: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="処理中に予期しないエラーが発生しました。ログを確認してください。")
+        print(f"[CLEANUP ERROR] {e}")
+
+    task_id = str(uuid.uuid4())
+    task_state = TaskState()
+    tasks[task_id] = task_state
+    
+    # バックグラウンドスレッドを開始して非同期に処理を実行
+    t = threading.Thread(
+        target=_run_generation_task,
+        args=(task_id, req.url, req.change_level, req.ai_summary_enabled),
+        daemon=True
+    )
+    t.start()
+    
+    return {"task_id": task_id}
+
+
+# タスクステータス取得API
+@app.get("/api/status/{task_id}")
+def get_task_status(task_id: str):
+    """
+    指定されたタスクの進捗率、ログ、エラーメッセージ、結果などを取得する。
+    """
+    task_state = tasks.get(task_id)
+    if not task_state:
+        raise HTTPException(status_code=404, detail="指定されたタスクが見つかりません。")
+        
+    return {
+        "status": task_state.status,
+        "progress": task_state.progress,
+        "logs": task_state.logs,
+        "detail": task_state.detail,
+        "result": task_state.result,
+        "error": task_state.error
+    }
+
+
+# タスクキャンセルAPI
+@app.post("/api/cancel/{task_id}")
+def cancel_task(task_id: str):
+    """
+    実行中のタスクを中止する。
+    """
+    task_state = tasks.get(task_id)
+    if not task_state:
+        raise HTTPException(status_code=404, detail="指定されたタスクが見つかりません。")
+        
+    task_state.cancel_event.set()
+    task_state.status = "cancelled"
+    return {"success": True}
 
 
 
