@@ -69,6 +69,25 @@
                         </div>
                     </div>
 
+                    <div class="input-group" style="margin-bottom: 24px;">
+                        <div class="label-with-value">
+                            <label>保存先フォーマット</label>
+                            <span class="badge" id="save-format-badge">PowerPoint</span>
+                        </div>
+                        <div class="switch-row">
+                            <span class="switch-hint">保存形式を PowerPoint または Google スライドから選択します</span>
+                            <div class="segmented-control">
+                                <input type="radio" id="format-pptx" name="save-format" value="pptx" checked>
+                                <label for="format-pptx">PowerPoint</label>
+                                
+                                <input type="radio" id="format-google" name="save-format" value="google_slides">
+                                <label for="format-google">Google スライド</label>
+                                
+                                <div class="segmented-slider"></div>
+                            </div>
+                        </div>
+                    </div>
+
                     <button type="submit" class="btn btn-primary" id="submit-btn">
                         <span class="material-icons-round">construction</span>
                         <span>プレゼンテーションを生成する</span>
@@ -89,8 +108,7 @@
                     <span class="material-icons-round">cancel</span>
                     <span>生成を中止する</span>
                 </button>
-                <!-- ログ表示エリア -->
-                <div id="log-container" class="log-container"></div>
+
             </section>
 
             <!-- 結果表示パネル -->
@@ -104,10 +122,16 @@
                             <p class="slide-count" id="result-slide-count">全 0 枚のスライドを生成しました</p>
                         </div>
                     </div>
-                    <a href="#" class="btn btn-success" id="download-btn" download>
-                        <span class="material-icons-round">download</span>
-                        <span>PowerPoint をダウンロード</span>
-                    </a>
+                    <div class="result-actions">
+                        <a href="#" class="btn btn-success" id="download-btn" download>
+                            <span class="material-icons-round">download</span>
+                            <span>PowerPoint をダウンロード</span>
+                        </a>
+                        <a href="#" class="btn btn-primary hidden" id="open-slides-btn" target="_blank">
+                            <span class="material-icons-round">open_in_new</span>
+                            <span>Google スライドを開く</span>
+                        </a>
+                    </div>
                 </div>
 
                 <!-- プレビュータイトル -->

@@ -2,6 +2,7 @@ import json
 import re
 import subprocess
 import os
+import time
 from pathlib import Path
 from typing import List, Dict
 
@@ -143,45 +144,65 @@ class SubtitleFetcher:
         cmd.append(self.url)
         
         # yt-dlp を実行
-        try:
-            print(f"字幕ダウンロード中: {' '.join(cmd)}")
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            
-            if result.returncode != 0:
-                print(f"yt-dlp エラー: {result.stderr}")
-                return None
-            
-            print(f"yt-dlp 出力: {result.stdout}")
-            
-            # ダウンロードされたファイルを探す
-            vtt_files = list(self.temp_dir.glob("*.vtt"))
-            if vtt_files:
-                vtt_file = vtt_files[0]  # 最初の VTT ファイルを使用
-                print(f"VTT ファイルを取得しました: {vtt_file}")
-                return str(vtt_file)
-            else:
-                print(f"VTT ファイルが見つかりません。タイプ: {subtitle_type}, 言語: {lang}")
-                return None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                print(f"字幕ダウンロード中 (試行 {attempt + 1}/{max_retries}): {' '.join(cmd)}")
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
                 
-        except subprocess.TimeoutExpired:
-            print("yt-dlp コマンドがタイムアウトしました。")
-            return None
-        except FileNotFoundError:
-            print("yt-dlp コマンドが見つかりません。インストールしてください: pip install yt-dlp")
-            return None
-        except Exception as e:
-            print(f"yt-dlp 実行中にエラーが発生しました: {e}")
-            return None
+                if result.returncode != 0:
+                    print(f"yt-dlp エラー: {result.stderr}")
+                    if attempt < max_retries - 1:
+                        print("字幕のダウンロードに失敗しました。3秒後にリトライします。")
+                        time.sleep(3)
+                        continue
+                    return None
+                
+                print(f"yt-dlp 出力: {result.stdout}")
+                
+                # ダウンロードされたファイルを探す
+                vtt_files = list(self.temp_dir.glob("*.vtt"))
+                if vtt_files:
+                    vtt_file = vtt_files[0]  # 最初の VTT ファイルを使用
+                    print(f"VTT ファイルを取得しました: {vtt_file}")
+                    return str(vtt_file)
+                else:
+                    print(f"VTT ファイルが見つかりません。タイプ: {subtitle_type}, 言語: {lang}")
+                    if attempt < max_retries - 1:
+                        print("3秒後にリトライします。")
+                        time.sleep(3)
+                        continue
+                    return None
+                    
+            except subprocess.TimeoutExpired:
+                print("yt-dlp コマンドがタイムアウトしました。")
+                if attempt < max_retries - 1:
+                    print("3秒後にリトライします。")
+                    time.sleep(3)
+                    continue
+                return None
+            except FileNotFoundError:
+                print("yt-dlp コマンドが見つかりません。インストールしてください: pip install yt-dlp")
+                return None
+            except Exception as e:
+                print(f"yt-dlp 実行中にエラーが発生しました: {e}")
+                if attempt < max_retries - 1:
+                    print("3秒後にリトライします。")
+                    time.sleep(3)
+                    continue
+                return None
 
     def _parse_vtt(self, vtt_text: str) -> List[Dict]:
-        """WebVTT 形式のテキストを解析してリスト `[{"start": float, "text": str}]` に変換する。"""
+        """WebVTT 形式のテキストを解析してリスト `[{"start": float, "text": str}]` に変換する。
+        ユーザー指定のクレンジングルールを適用し、自動生成字幕特有の重複を排除して読みやすさを向上させる。
+        """
         lines = vtt_text.splitlines()
-        entries = []
+        temp_entries = []
         
         # タイムスタンプ行パターン: "00:01:23.456 --> 00:01:25.789" または "01:23.456 --> 01:25.789"
         time_pattern = re.compile(r'(?:(\d{2}):)?(\d{2}):(\d{2})[.,](\d{3})\s+-->\s+')
@@ -191,45 +212,84 @@ class SubtitleFetcher:
         
         for line in lines:
             line = line.strip()
-            if not line:
-                if current_start is not None and current_text_lines:
-                    text = " ".join(current_text_lines).strip()
-                    # <c>タグやスタイルタグなどの除去
-                    text = re.sub(r'<[^>]+>', '', text)
-                    # 重複スペースの除去
-                    text = re.sub(r'\s+', ' ', text)
-                    if text:
-                        entries.append({"start": current_start, "text": text})
-                    current_start = None
-                    current_text_lines = []
-                continue
-                
-            match = time_pattern.match(line)
-            if match:
-                # タイムスタンプ部分をパースして秒に変換
-                time_str = line.split("-->")[0].strip()
-                parts = time_str.split(":")
-                if len(parts) == 3: # hh:mm:ss.mmm
-                    h, m, s = parts
-                    sec = float(h) * 3600 + float(m) * 60 + float(s.replace(',', '.'))
-                elif len(parts) == 2: # mm:ss.mmm
-                    m, s = parts
-                    sec = float(m) * 60 + float(s.replace(',', '.'))
-                else:
-                    sec = 0.0
-                current_start = sec
-            elif current_start is not None:
-                # ヘッダー行やメタデータなどを除外
-                if not line.startswith("WEBVTT") and not line.startswith("Kind:") and not line.startswith("Language:"):
-                    current_text_lines.append(line)
+            
+            # 空行、タイムスタンプ（-->）を含む行、数字のみの行、WEBVTTヘッダー、メタデータ行を除外
+            if not line or "-->" in line or line.isdigit() or line == "WEBVTT" or line.startswith("Kind:") or line.startswith("Language:"):
+                # タイムスタンプ行は時間の抽出に必要なので、ここで判定して処理
+                match = time_pattern.match(line)
+                if match:
+                    # 以前のブロックを確定して保存
+                    if current_start is not None and current_text_lines:
+                        self._add_clean_entry(temp_entries, current_start, current_text_lines)
+                        current_text_lines = []
                     
+                    # 新しいタイムスタンプを解析して秒に変換
+                    time_str = line.split("-->")[0].strip()
+                    parts = time_str.split(":")
+                    if len(parts) == 3:  # hh:mm:ss.mmm
+                        h, m, s = parts
+                        sec = float(h) * 3600 + float(m) * 60 + float(s.replace(',', '.'))
+                    elif len(parts) == 2:  # mm:ss.mmm
+                        m, s = parts
+                        sec = float(m) * 60 + float(s.replace(',', '.'))
+                    else:
+                        sec = 0.0
+                    current_start = sec
+                continue
+            
+            if current_start is not None:
+                current_text_lines.append(line)
+                
         # 最後のブロックを処理
         if current_start is not None and current_text_lines:
-            text = " ".join(current_text_lines).strip()
-            text = re.sub(r'<[^>]+>', '', text)
-            text = re.sub(r'\s+', ' ', text)
-            if text:
-                entries.append({"start": current_start, "text": text})
-                
+            self._add_clean_entry(temp_entries, current_start, current_text_lines)
+            
+        # 最終的な entries リストを構築 (raw_text キーを排除)
+        entries = []
+        for entry in temp_entries:
+            entries.append({
+                "start": entry["start"],
+                "text": entry["text"]
+            })
         return entries
+
+    def _add_clean_entry(self, temp_entries: List[Dict], start_time: float, text_lines: List[str]):
+        """テキスト行をクレンジングし、重複を排除して一時エントリーリストに追加する。"""
+        cleaned_lines = []
+        for line in text_lines:
+            # タグの除去
+            line = re.sub(r'<[^>]+>', '', line).strip()
+            # 重複スペースの除去
+            line = re.sub(r'\s+', ' ', line)
+            if line:
+                cleaned_lines.append(line)
+                
+        if not cleaned_lines:
+            return
+
+        # 行を結合
+        raw_text = " ".join(cleaned_lines).strip()
+        text = raw_text
+        
+        # 直前のエントリーとの重複排除（自動生成字幕の累積表示対策）
+        if temp_entries:
+            prev_raw_text = temp_entries[-1]["raw_text"]
+            
+            # 1. 完全一致なら追加しない
+            if raw_text == prev_raw_text:
+                return
+                
+            # 2. 直前のブロックの生のテキストが、今回のテキストの開始部分と一致する場合、重複部分を除去
+            if raw_text.startswith(prev_raw_text):
+                text = raw_text[len(prev_raw_text):].strip()
+            # 3. 今回のテキストが直前のテキストに含まれる場合は追加しない（スクロールアウト対策）
+            elif raw_text in prev_raw_text:
+                return
+                
+        if text:
+            temp_entries.append({
+                "start": start_time,
+                "text": text,
+                "raw_text": raw_text
+            })
 

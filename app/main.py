@@ -19,6 +19,7 @@ class GenerateRequest(BaseModel):
     url: str
     change_level: int = 5  # 変化検知レベル（1=最敏感 〜 10=最鈍感）
     ai_summary_enabled: bool = False
+    save_format: str = "pptx"
 
 # 静的画像配信用エンドポイント
 @app.get("/api/images/{task_id}/{image_name}")
@@ -98,7 +99,7 @@ def shutdown_event():
             except Exception as e:
                 print(f"[SHUTDOWN] 削除に失敗 {path}: {e}")
 
-def _run_generation_task(task_id: str, url: str, change_level: int, ai_summary_enabled: bool):
+def _run_generation_task(task_id: str, url: str, change_level: int, ai_summary_enabled: bool, save_format: str):
     """バックグラウンドでプレゼンテーション生成を実行するスレッド用関数"""
     task_state = tasks.get(task_id)
     if not task_state:
@@ -109,6 +110,7 @@ def _run_generation_task(task_id: str, url: str, change_level: int, ai_summary_e
             url=url,
             change_level=change_level,
             ai_summary_enabled=ai_summary_enabled,
+            save_format=save_format,
             task_state=task_state
         )
         task_state.result = result
@@ -151,7 +153,7 @@ def generate_presentation_api(req: GenerateRequest):
     # バックグラウンドスレッドを開始して非同期に処理を実行
     t = threading.Thread(
         target=_run_generation_task,
-        args=(task_id, req.url, req.change_level, req.ai_summary_enabled),
+        args=(task_id, req.url, req.change_level, req.ai_summary_enabled, req.save_format),
         daemon=True
     )
     t.start()

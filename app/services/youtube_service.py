@@ -2,11 +2,19 @@ import os
 import re
 import uuid
 import subprocess
+import time
 import cv2
 import numpy as np
+import functools
+from ja_sentence_segmenter.common.pipeline import make_pipeline
+from ja_sentence_segmenter.concatenate.simple_concatenator import concatenate_matching
+from ja_sentence_segmenter.normalize.neologd_normalizer import normalize
+from ja_sentence_segmenter.split.simple_splitter import split_newline, split_punctuation
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 import yt_dlp
+import budoux
+from .google_drive_service import GoogleDriveService
 from pptx import Presentation
 from pptx.util import Inches, Pt
 # pyrefly: ignore [missing-import]
@@ -37,6 +45,128 @@ _CHANGE_LEVEL_TO_THRESHOLD = {
     9:  80.0,
    10: 100.0,
 }
+
+
+def split_japanese_sentences(text: str) -> str:
+    """日本語のテキストを ja_sentence_segmenter を用いて文ごとに分割し、
+    改行で区切られた読みやすい文字列に整形する。
+    句読点がない自動生成字幕などの場合は、スペースで分割するフォールバックを行う。
+    """
+    if not text:
+        return text
+        
+    # 句読点で区切るルール
+    split_punc = functools.partial(split_punctuation, punctuations=r"。!?")
+    
+    # 連結ルール（「の」で終わる文などを結合）
+    concat_tail_no = functools.partial(
+        concatenate_matching, 
+        former_matching_rule=r"^(?P<result>.+)(の)$", 
+        remove_former_matched=False
+    )
+    
+    # パイプライン構築
+    segmenter = make_pipeline(normalize, split_newline, concat_tail_no, split_punc)
+    
+    # セグメント実行
+    sentences = list(segmenter(text))
+    
+    # もし文が分割されなかった（句読点がなく、1つの長い文になっている）場合
+    # 自動字幕を想定し、スペース（半角/全角）での分割を試みる
+    if len(sentences) <= 1:
+        spaced_parts = re.split(r'\s+', text)
+        spaced_parts = [p.strip() for p in spaced_parts if p.strip()]
+        if len(spaced_parts) > 1:
+            return "\n".join(spaced_parts)
+            
+    return "\n".join(sentences).strip()
+
+
+def apply_budoux_layout(text: str, max_line_len: int = 25) -> str:
+    """BudouX を使用して、日本語テキストが不自然な位置で改行されないように、
+    適切なフレーズ境界で改行（\n）を挿入して整形する。
+    """
+    if not text:
+        return text
+        
+    parser = budoux.load_default_japanese_parser()
+    lines = text.splitlines()
+    formatted_lines = []
+    
+    for line in lines:
+        if len(line) <= max_line_len:
+            formatted_lines.append(line)
+            continue
+            
+        # フレーズに分割
+        phrases = parser.parse(line)
+        
+        current_line = ""
+        line_parts = []
+        
+        for phrase in phrases:
+            # 現在の行に追加すると上限文字数を超える場合、改行
+            if len(current_line) + len(phrase) > max_line_len:
+                if current_line:
+                    line_parts.append(current_line)
+                current_line = phrase
+            else:
+                current_line += phrase
+                
+        if current_line:
+            line_parts.append(current_line)
+            
+        formatted_lines.extend(line_parts)
+        
+    return "\n".join(formatted_lines)
+
+
+def is_japanese(text: str) -> bool:
+    """テキストに日本語の文字（ひらがな、カタカナ、漢字）が含まれているか判定する。"""
+    if not text:
+        return False
+    # ひらがな、カタカナ、CJK統合漢字の範囲を正規表現でチェック
+    return bool(re.search(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]', text))
+
+
+def clean_english_text(text: str) -> str:
+    """英文テキストをクレンジングし、改行やハイフン、余分なスペースを整形する。"""
+    if not text:
+        return text
+
+    # 1. 改行で分断された単語のハイフン(-)を連結
+    text = re.sub(r'-\s*\n', '', text)
+
+    # 2. 連続する改行やスペースを単一のスペースに置換
+    # 2つ以上の改行を段落の区切りとして保持しつつ、単一の改行をスペースに変換
+    text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)
+
+    # 3. 余分なスペースの削除
+    # 改行以外の連続する空白文字を1つのスペースにする
+    text = re.sub(r'[^\S\n]+', ' ', text)
+    # 各行の先頭と末尾の空白をトリム
+    lines = [line.strip() for line in text.split('\n')]
+    # 連続する空行を整理する
+    cleaned_text = '\n'.join(lines)
+    cleaned_text = re.sub(r'\n{3,}', '\n\n', cleaned_text)
+
+    return cleaned_text.strip()
+
+
+def format_slide_text(text: str) -> str:
+    """テキスト言語（日本語/その他）を判定し、最適な整形処理を適用する。"""
+    if not text:
+        return text
+
+    if is_japanese(text):
+        # 日本語の場合は文分割 + BudouX 禁則処理
+        text = split_japanese_sentences(text)
+        text = apply_budoux_layout(text)
+    else:
+        # 英語など日本語以外の場合は英文クレンジング
+        text = clean_english_text(text)
+
+    return text
 
 
 def sanitize_filename(title: str, max_length: int = 200) -> str:
@@ -134,33 +264,52 @@ def download_video(url: str, output_path: str) -> str:
         'quiet': True,
         'no_warnings': True,
     }
+    
     try:
         with yt_dlp.YoutubeDL(base_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             title = info.get('title', 'YouTube Video')
-
-        if not os.path.exists(output_path):
-            print(f"動画をダウンロードします: {output_path}")
-            ydl_opts = {
-                'format': 'bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=1080][vcodec^=avc1]/best[ext=mp4]',
-                'outtmpl': output_path,
-                'quiet': True,
-                'no_warnings': True,
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.extract_info(url, download=True)
-        else:
-            print(f"[INFO] 動画ファイルは既に存在します。ダウンロードをスキップします: {output_path}")
-
-        return title
-    except yt_dlp.utils.DownloadError as e:
+    except Exception as e:
         error_msg = str(e)
         if "Video unavailable" in error_msg:
             raise ValueError("指定された動画は存在しないか、非公開、あるいは地域制限によりアクセスできません。")
-        else:
-            raise ValueError(f"動画のダウンロードに失敗しました: {error_msg}")
-    except Exception as e:
-        raise ValueError(f"動画のダウンロード処理中に予期せぬエラーが発生しました: {str(e)}")
+        raise ValueError(f"動画情報の取得に失敗しました: {error_msg}")
+
+    if not os.path.exists(output_path):
+        print(f"動画をダウンロードします: {output_path}")
+        ydl_opts = {
+            'format': 'bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<=1080][vcodec^=avc1]/best[ext=mp4]',
+            'outtmpl': output_path,
+            'quiet': True,
+            'no_warnings': True,
+        }
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.extract_info(url, download=True)
+                break
+            except yt_dlp.utils.DownloadError as e:
+                error_msg = str(e)
+                if "Video unavailable" in error_msg:
+                    raise ValueError("指定された動画は存在しないか、非公開、あるいは地域制限によりアクセスできません。")
+                
+                if attempt < max_retries - 1:
+                    print(f"動画のダウンロードに失敗しました。3秒後にリトライします ({attempt + 1}/{max_retries} 回目の試行): {error_msg}")
+                    time.sleep(3)
+                else:
+                    raise ValueError(f"動画のダウンロードに失敗しました: {error_msg}")
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"動画ダウンロード中に予期せぬエラーが発生しました。3秒後にリトライします ({attempt + 1}/{max_retries} 回目の試行): {e}")
+                    time.sleep(3)
+                else:
+                    raise ValueError(f"動画のダウンロード処理中に予期せぬエラーが発生しました: {str(e)}")
+    else:
+        print(f"[INFO] 動画ファイルは既に存在します。ダウンロードをスキップします: {output_path}")
+
+    return title
 
 
 def get_keyframe_timestamps(video_path: str) -> list:
@@ -457,6 +606,7 @@ def create_presentation(
                 if current_time <= start < next_time:
                     slide_text_list.append(entry["text"])
             slide_text = "\n".join(slide_text_list).strip()
+            slide_text = format_slide_text(slide_text)
             if not slide_text:
                 slide_text = "(この区間の文字起こしデータはありません)"
 
@@ -491,7 +641,7 @@ def create_presentation(
 
                         for key_point in summary_result["key_points"]:
                             p_kp = tf.add_paragraph()
-                            p_kp.text = f"• {key_point}"
+                            p_kp.text = f"• {format_slide_text(key_point)}"
                             p_kp.font.size = Pt(11)
                             p_kp.font.name = "Arial"
                             p_kp.font.color.rgb = RGBColor(50, 50, 50)
@@ -509,7 +659,7 @@ def create_presentation(
                         p_main_title.space_after = Pt(4)
 
                         p_main = tf.add_paragraph()
-                        p_main.text = summary_result["main_message"]
+                        p_main.text = format_slide_text(summary_result["main_message"])
                         p_main.font.size = Pt(11)
                         p_main.font.name = "Arial"
                         p_main.font.color.rgb = RGBColor(20, 20, 100)
@@ -559,6 +709,7 @@ def process_youtube_to_presentation(
     url: str,
     change_level: int = 5,
     ai_summary_enabled: bool = False,
+    save_format: str = "pptx",
     task_state = None
 ) -> dict:
     """
@@ -651,6 +802,15 @@ def process_youtube_to_presentation(
             task_state.log("PowerPointプレゼンテーションの生成を開始しました...", 80)
         create_presentation(title, scenes, transcript, output_pptx_path, url=url, ai_summary_enabled=ai_summary_enabled, task_state=task_state)
 
+        # Googleスライド保存時はGoogleドライブへアップロード・スライド変換
+        google_slides_url = None
+        if save_format == "google_slides":
+            if task_state:
+                task_state.log("Google スライドへ変換・アップロード中...", 90)
+            print("Googleスライドへアップロード中...")
+            drive_service = GoogleDriveService()
+            google_slides_url = drive_service.upload_and_convert_to_slides(output_pptx_path, output_filename)
+
         # フロントエンドに返す結果データを整形
         if task_state:
             task_state.log("結果データを生成中...", 95)
@@ -666,6 +826,7 @@ def process_youtube_to_presentation(
                 if current_time <= start < next_time:
                     slide_text_list.append(entry["text"])
             slide_text = " ".join(slide_text_list).strip()
+            slide_text = format_slide_text(slide_text)
 
             formatted_scenes.append({
                 "id": i,
@@ -679,6 +840,8 @@ def process_youtube_to_presentation(
             "task_id": os.path.basename(task_temp_dir),
             "title": title,
             "pptx_filename": output_filename,
+            "google_slides_url": google_slides_url,
+            "save_format": save_format,
             "scenes": formatted_scenes,
             "has_transcript": bool(transcript),
         }

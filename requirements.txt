@@ -10,3 +10,5 @@ beautifulsoup4==4.12.3
 playwright==1.45.0
 google-genai
 numpy<2
+git+https://github.com/wwwcojp/ja_sentence_segmenter.git
+budoux==0.8.4

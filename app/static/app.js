@@ -16,6 +16,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const resultTitle = document.getElementById("result-title");
     const resultSlideCount = document.getElementById("result-slide-count");
     const downloadBtn = document.getElementById("download-btn");
+    const openSlidesBtn = document.getElementById("open-slides-btn");
+    const saveFormatBadge = document.getElementById("save-format-badge");
+    const formatPptxRadio = document.getElementById("format-pptx");
+    const formatGoogleRadio = document.getElementById("format-google");
     const previewContainer = document.getElementById("slides-preview-container");
 
     // 変化レベル（1〜10）のラベルテキスト
@@ -44,6 +48,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
     aiSummaryEnabled.addEventListener("change", syncAiSummaryState);
     syncAiSummaryState();
+
+    function syncSaveFormatState() {
+        if (formatPptxRadio && saveFormatBadge) {
+            saveFormatBadge.textContent = formatPptxRadio.checked ? "PowerPoint" : "Google スライド";
+        }
+    }
+    if (formatPptxRadio && formatGoogleRadio) {
+        formatPptxRadio.addEventListener("change", syncSaveFormatState);
+        formatGoogleRadio.addEventListener("change", syncSaveFormatState);
+        syncSaveFormatState();
+    }
 
     // 秒数を分:秒フォーマットに変換するヘルパー関数
     function formatTime(seconds) {
@@ -148,6 +163,9 @@ document.addEventListener("DOMContentLoaded", () => {
     function resetUI() {
         loadingSection.classList.add("hidden");
         inputSection.classList.remove("hidden");
+        // ダウンロード/スライドボタンの表示を初期化
+        if (downloadBtn) downloadBtn.classList.remove("hidden");
+        if (openSlidesBtn) openSlidesBtn.classList.add("hidden");
         // キャンセルボタンの活性化状態をリセット
         cancelBtn.disabled = false;
         cancelBtn.querySelector("span:last-child").textContent = "生成を中止する";
@@ -168,13 +186,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function logMessage(msg) {
-        const logContainer = document.getElementById('log-container');
-        if (logContainer) {
-            const div = document.createElement('div');
-            div.textContent = `> ${msg}`;
-            logContainer.appendChild(div);
-            logContainer.scrollTop = logContainer.scrollHeight;
-        }
+        console.log(`> ${msg}`);
     }
 
     // フォーム送信処理
@@ -220,7 +232,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 body: JSON.stringify({
                     url: url,
                     change_level: changeLevel,
-                    ai_summary_enabled: aiSummary
+                    ai_summary_enabled: aiSummary,
+                    save_format: formatPptxRadio.checked ? "pptx" : "google_slides"
                 })
             });
 
@@ -311,9 +324,17 @@ document.addEventListener("DOMContentLoaded", () => {
                         resultTitle.textContent = resultData.title || "無題";
                         resultSlideCount.textContent = `全 ${scenesLength} 枚のスライドを生成しました`;
                         
-                        // ダウンロードリンクの設定
-                        downloadBtn.href = `/api/download/${resultData.task_id}/${resultData.pptx_filename}`;
-                        downloadBtn.download = (resultData.title || "presentation") + ".pptx";
+                        // ダウンロードリンクまたはGoogleスライドオープンボタンの設定
+                        if (resultData.save_format === "google_slides" && resultData.google_slides_url) {
+                            downloadBtn.classList.add("hidden");
+                            openSlidesBtn.classList.remove("hidden");
+                            openSlidesBtn.href = resultData.google_slides_url;
+                        } else {
+                            downloadBtn.classList.remove("hidden");
+                            openSlidesBtn.classList.add("hidden");
+                            downloadBtn.href = `/api/download/${resultData.task_id}/${resultData.pptx_filename}`;
+                            downloadBtn.download = (resultData.title || "presentation") + ".pptx";
+                        }
 
                         // プレビューカードの動的生成
                         previewContainer.innerHTML = "";
