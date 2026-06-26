@@ -17,19 +17,43 @@ load_dotenv()
 app = FastAPI(title="YouTube to Presentation Generator API")
 
 
-def _resolve_task_artifact_path(task_id: str, artifact_path: str) -> tuple[str, str]:
-    """タスク配下の成果物パスを安全に解決する。"""
-    safe_task_id = os.path.basename(task_id)
-    task_dir = os.path.abspath(os.path.join(TEMP_DIR, safe_task_id))
-    resolved_path = os.path.abspath(os.path.join(task_dir, artifact_path))
+def validate_task_id(task_id: str):
+    """task_id が正当な UUID 形式であることを検証する。"""
+    try:
+        uuid.UUID(task_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="無効なタスクIDです。")
 
-    if os.path.commonpath([task_dir, resolved_path]) != task_dir:
-        raise HTTPException(status_code=400, detail="無効なファイルパスです。")
 
-    if not os.path.exists(resolved_path):
-        raise HTTPException(status_code=404, detail="成果物ファイルが見つかりません。")
-
-    return safe_task_id, resolved_path
+def get_secure_path(task_id: str, path_suffix: str) -> str:
+    """
+    task_id と成果物パスの安全性を検証し、絶対パスを返す。
+    """
+    validate_task_id(task_id)
+    
+    # 経路制御文字 (..) や絶対パスの直接指定を拒否
+    if ".." in path_suffix or path_suffix.startswith("/") or "\\" in path_suffix:
+        raise HTTPException(status_code=400, detail="不正なファイル名またはパスが指定されています。")
+        
+    resolved_base = os.path.realpath(TEMP_DIR)
+    task_dir = os.path.join(resolved_base, task_id)
+    resolved_task_dir = os.path.realpath(task_dir)
+    
+    # task_dir 自体が TEMP_DIR 配下にあることを確認
+    if not resolved_task_dir.startswith(resolved_base + os.sep):
+        raise HTTPException(status_code=400, detail="不正なアクセスです。")
+        
+    target_path = os.path.join(resolved_task_dir, path_suffix)
+    resolved_target = os.path.realpath(target_path)
+    
+    # 解決されたターゲットが task_dir 配下にあることを確認
+    if not resolved_target.startswith(resolved_task_dir + os.sep) and resolved_target != resolved_task_dir:
+        raise HTTPException(status_code=400, detail="不正なアクセスです。")
+        
+    if not os.path.exists(resolved_target):
+        raise HTTPException(status_code=404, detail="ファイルが見つかりません。")
+        
+    return resolved_target
 
 # リクエストスキーマ
 class GenerateRequest(BaseModel):
@@ -44,15 +68,8 @@ def get_extracted_image(task_id: str, image_name: str):
     """
     生成タスクで抽出された画像を返す。
     """
-    # ディレクトリトラバーサル防止のため、ファイル名とパスを厳密にチェック
-    safe_task_id = os.path.basename(task_id)
-    safe_image_name = os.path.basename(image_name)
-    image_path = os.path.join(TEMP_DIR, safe_task_id, safe_image_name)
-    
-    if not os.path.exists(image_path):
-        raise HTTPException(status_code=404, detail="画像が見つかりません。")
-        
-    return FileResponse(image_path)
+    resolved_path = get_secure_path(task_id, image_name)
+    return FileResponse(resolved_path)
 
 # 成果物ダウンロード用エンドポイント
 @app.get("/api/download/{task_id}/{filename}")
@@ -60,14 +77,12 @@ def download_presentation(task_id: str, filename: str):
     """
     生成された成果物をダウンロードする。
     """
-    _, artifact_path = _resolve_task_artifact_path(task_id, os.path.basename(filename))
-    safe_filename = os.path.basename(filename)
-
-    media_type, _ = mimetypes.guess_type(artifact_path)
+    resolved_path = get_secure_path(task_id, filename)
+    media_type, _ = mimetypes.guess_type(resolved_path)
     return FileResponse(
-        artifact_path,
+        resolved_path,
         media_type=media_type or "application/octet-stream",
-        filename=safe_filename
+        filename=os.path.basename(resolved_path)
     )
 
 
@@ -76,7 +91,7 @@ def get_artifact_file(task_id: str, artifact_path: str):
     """
     生成された成果物配下のファイルを返す。
     """
-    _, resolved_path = _resolve_task_artifact_path(task_id, artifact_path)
+    resolved_path = get_secure_path(task_id, artifact_path)
     media_type, _ = mimetypes.guess_type(resolved_path)
     return FileResponse(
         resolved_path,
@@ -195,6 +210,7 @@ def get_task_status(task_id: str):
     """
     指定されたタスクの進捗率、ログ、エラーメッセージ、結果などを取得する。
     """
+    validate_task_id(task_id)
     task_state = tasks.get(task_id)
     if not task_state:
         raise HTTPException(status_code=404, detail="指定されたタスクが見つかりません。")
@@ -215,6 +231,7 @@ def cancel_task(task_id: str):
     """
     実行中のタスクを中止する。
     """
+    validate_task_id(task_id)
     task_state = tasks.get(task_id)
     if not task_state:
         raise HTTPException(status_code=404, detail="指定されたタスクが見つかりません。")
@@ -232,6 +249,7 @@ def confirm_task(task_id: str, action: str):
     """
     スライド数超過時の一時停止に対するユーザーの確認アクションを受け取る。
     """
+    validate_task_id(task_id)
     task_state = tasks.get(task_id)
     if not task_state:
         raise HTTPException(status_code=404, detail="指定されたタスクが見つかりません。")
