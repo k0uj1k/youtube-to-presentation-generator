@@ -137,6 +137,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentTaskId = null;
     let pollingInterval = null;
     let latestResultData = null;
+    const sessionTaskIds = [];
 
     // キャンセル処理
     cancelBtn.addEventListener("click", async () => {
@@ -330,6 +331,9 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             currentTaskId = data.task_id;
+            if (!sessionTaskIds.includes(currentTaskId)) {
+                sessionTaskIds.push(currentTaskId);
+            }
             
             // ポーリング開始
             let displayedLogCount = 0;
@@ -506,4 +510,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // トースト表示（外部から呼び出し可能）
     window.showToast = showToast;
+
+    // ブラウザ閉鎖時にセッション中のタスクデータをクリーンアップする
+    window.addEventListener("beforeunload", () => {
+        if (sessionTaskIds.length > 0) {
+            const blob = new Blob([JSON.stringify({ task_ids: sessionTaskIds })], { type: "application/json" });
+            navigator.sendBeacon("/api/cleanup-session", blob);
+        }
+    });
 });

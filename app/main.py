@@ -62,6 +62,31 @@ class GenerateRequest(BaseModel):
     ai_summary_enabled: bool = False
     save_format: Literal["pptx", "markdown"] = "pptx"
 
+
+class CleanupSessionRequest(BaseModel):
+    task_ids: list[str]
+
+
+@app.post("/api/cleanup-session")
+def cleanup_session(req: CleanupSessionRequest):
+    """
+    ブラウザが閉じられた際に、セッション中に生成されたタスクの一時ファイルを削除する。
+    """
+    import shutil
+    for task_id in req.task_ids:
+        try:
+            validate_task_id(task_id)
+            task_dir = os.path.join(TEMP_DIR, task_id)
+            if os.path.exists(task_dir) and os.path.isdir(task_dir):
+                shutil.rmtree(task_dir)
+                print(f"[SESSION CLEANUP] タスクディレクトリを削除しました: {task_id}")
+            # タスク管理辞書からも削除
+            if task_id in tasks:
+                del tasks[task_id]
+        except Exception as e:
+            print(f"[SESSION CLEANUP] タスク {task_id} の削除に失敗: {e}")
+    return {"success": True}
+
 # 静的画像配信用エンドポイント
 @app.get("/api/images/{task_id}/{image_name}")
 def get_extracted_image(task_id: str, image_name: str):
@@ -117,13 +142,14 @@ def cleanup_temp_dir(exclude_video_id: str):
                     print(f"[CLEANUP] 他の動画ファイルを削除しました: {name}")
                 except Exception as e:
                     print(f"[CLEANUP] 動画ファイルの削除に失敗: {e}")
-        # タスクディレクトリの削除判定
+        # タスクディレクトリの削除判定 (現在の動画ID用のディレクトリは除外)
         elif os.path.isdir(path):
-            try:
-                shutil.rmtree(path)
-                print(f"[CLEANUP] 古いタスクディレクトリを削除しました: {name}")
-            except Exception as e:
-                print(f"[CLEANUP] タスクディレクトリの削除に失敗: {e}")
+            if name != exclude_video_id:
+                try:
+                    shutil.rmtree(path)
+                    print(f"[CLEANUP] 古いタスクディレクトリを削除しました: {name}")
+                except Exception as e:
+                    print(f"[CLEANUP] タスクディレクトリの削除に失敗: {e}")
 
 
 @app.on_event("shutdown")
@@ -141,6 +167,24 @@ def shutdown_event():
                 print(f"[SHUTDOWN] 削除しました: {name}")
             except Exception as e:
                 print(f"[SHUTDOWN] 削除に失敗 {path}: {e}")
+                
+    # 字幕キャッシュのクリーンアップ (7日以上経過したファイルを削除)
+    CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "cache")
+    if os.path.exists(CACHE_DIR):
+        import time
+        now = time.time()
+        # 7日 = 604800秒
+        ttl = 604800
+        for name in os.listdir(CACHE_DIR):
+            path = os.path.join(CACHE_DIR, name)
+            try:
+                if os.path.isfile(path):
+                    mtime = os.path.getmtime(path)
+                    if now - mtime > ttl:
+                        os.remove(path)
+                        print(f"[SHUTDOWN CLEANUP] 古い字幕キャッシュを削除しました: {name}")
+            except Exception as e:
+                print(f"[SHUTDOWN CLEANUP] 字幕キャッシュの削除に失敗 {path}: {e}")
 
 def _run_generation_task(task_id: str, url: str, change_level: int, ai_summary_enabled: bool, save_format: str):
     """バックグラウンドでプレゼンテーション生成を実行するスレッド用関数"""
