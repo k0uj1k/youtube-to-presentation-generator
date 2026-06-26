@@ -1,6 +1,8 @@
 import os
 import threading
 import uuid
+import mimetypes
+from typing import Literal
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,12 +16,27 @@ load_dotenv()
 
 app = FastAPI(title="YouTube to Presentation Generator API")
 
+
+def _resolve_task_artifact_path(task_id: str, artifact_path: str) -> tuple[str, str]:
+    """タスク配下の成果物パスを安全に解決する。"""
+    safe_task_id = os.path.basename(task_id)
+    task_dir = os.path.abspath(os.path.join(TEMP_DIR, safe_task_id))
+    resolved_path = os.path.abspath(os.path.join(task_dir, artifact_path))
+
+    if os.path.commonpath([task_dir, resolved_path]) != task_dir:
+        raise HTTPException(status_code=400, detail="無効なファイルパスです。")
+
+    if not os.path.exists(resolved_path):
+        raise HTTPException(status_code=404, detail="成果物ファイルが見つかりません。")
+
+    return safe_task_id, resolved_path
+
 # リクエストスキーマ
 class GenerateRequest(BaseModel):
     url: str
     change_level: int = 5  # 変化検知レベル（1=最敏感 〜 10=最鈍感）
     ai_summary_enabled: bool = False
-    save_format: str = "pptx"
+    save_format: Literal["pptx", "markdown"] = "pptx"
 
 # 静的画像配信用エンドポイント
 @app.get("/api/images/{task_id}/{image_name}")
@@ -37,23 +54,34 @@ def get_extracted_image(task_id: str, image_name: str):
         
     return FileResponse(image_path)
 
-# PPTXダウンロード用エンドポイント
+# 成果物ダウンロード用エンドポイント
 @app.get("/api/download/{task_id}/{filename}")
 def download_presentation(task_id: str, filename: str):
     """
-    生成されたPowerPointファイルをダウンロードする。
+    生成された成果物をダウンロードする。
     """
-    safe_task_id = os.path.basename(task_id)
+    _, artifact_path = _resolve_task_artifact_path(task_id, os.path.basename(filename))
     safe_filename = os.path.basename(filename)
-    pptx_path = os.path.join(TEMP_DIR, safe_task_id, safe_filename)
-    
-    if not os.path.exists(pptx_path):
-        raise HTTPException(status_code=404, detail="プレゼンテーションファイルが見つかりません。")
-        
+
+    media_type, _ = mimetypes.guess_type(artifact_path)
     return FileResponse(
-        pptx_path, 
-        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        artifact_path,
+        media_type=media_type or "application/octet-stream",
         filename=safe_filename
+    )
+
+
+@app.get("/api/artifacts/{task_id}/{artifact_path:path}")
+def get_artifact_file(task_id: str, artifact_path: str):
+    """
+    生成された成果物配下のファイルを返す。
+    """
+    _, resolved_path = _resolve_task_artifact_path(task_id, artifact_path)
+    media_type, _ = mimetypes.guess_type(resolved_path)
+    return FileResponse(
+        resolved_path,
+        media_type=media_type or "application/octet-stream",
+        filename=os.path.basename(resolved_path),
     )
 
 def cleanup_temp_dir(exclude_video_id: str):
