@@ -9,7 +9,7 @@
   - 現在の `os.path.basename()` 処理は `..` を拒否しないため、`/api/images/../gemini_service.py` のようなパスで意図したタスクディレクトリ外へ抜けられる可能性がある。
   - `task_id` を UUID 形式に制限し、ファイル名を検証し、解決後のパスが必ず `TEMP_DIR` 配下にあることを確認する。
 
-- [ ] **TODO-002: Gemini 要約を本当に任意機能として安全に扱う**
+- [x] **TODO-002: Gemini 要約を本当に任意機能として安全に扱う**
   - 対象ファイル: `app/services/gemini_service.py`, `app/services/youtube_service.py`
   - `Optional` と `Dict` が import されないまま使われている。
   - `Dict[str, any]` は `typing` の `Any` を使うべき。
@@ -27,7 +27,7 @@
   - 一時動画ファイルは削除されるが、生成画像、PPTX、VTT、字幕キャッシュは無期限に残る。
   - TTL による削除、またはタスク単位のクリーンアップ処理を追加する。
 
-- [ ] **TODO-005: Gemini SDK の API スタイルを統一する**
+- [x] **TODO-005: Gemini SDK の API スタイルを統一する**
   - 対象ファイル: `app/services/gemini_service.py`
   - コードは先に `google.genai` を import しているが、呼び出しは `google.generativeai` の `configure()` と `GenerativeModel()` に依存している。
   - `google-generativeai` のみに寄せるか、新しい `google.genai` クライアント用の実装に更新する。

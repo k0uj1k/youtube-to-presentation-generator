@@ -75,13 +75,13 @@
                             <span class="badge" id="save-format-badge">PowerPoint</span>
                         </div>
                         <div class="switch-row">
-                            <span class="switch-hint">保存形式を PowerPoint または Google スライドから選択します</span>
+                            <span class="switch-hint">保存形式を PowerPoint または Markdown から選択します</span>
                             <div class="segmented-control">
                                 <input type="radio" id="format-pptx" name="save-format" value="pptx" checked>
                                 <label for="format-pptx">PowerPoint</label>
                                 
-                                <input type="radio" id="format-google" name="save-format" value="google_slides">
-                                <label for="format-google">Google スライド</label>
+                                <input type="radio" id="format-markdown" name="save-format" value="markdown">
+                                <label for="format-markdown">Markdown</label>
                                 
                                 <div class="segmented-slider"></div>
                             </div>
@@ -127,10 +127,6 @@
                             <span class="material-icons-round">download</span>
                             <span>PowerPoint をダウンロード</span>
                         </a>
-                        <a href="#" class="btn btn-primary hidden" id="open-slides-btn" target="_blank">
-                            <span class="material-icons-round">open_in_new</span>
-                            <span>Google スライドを開く</span>
-                        </a>
                     </div>
                 </div>
 
@@ -143,6 +139,12 @@
                 <!-- スライドプレビューグリッド -->
                 <div class="slides-grid" id="slides-preview-container">
                     <!-- JavaScriptで動的生成 -->
+                </div>
+                <div class="preview-actions">
+                    <button type="button" class="btn btn-primary" id="back-to-top-btn">
+                        <span class="material-icons-round">vertical_align_top</span>
+                        <span>先頭に戻る</span>
+                    </button>
                 </div>
             </section>
         </main>

@@ -1,8 +1,9 @@
 import os
 import re
-import uuid
+import shutil
 import subprocess
 import time
+import uuid
 import cv2
 import numpy as np
 import functools
@@ -14,7 +15,6 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 import yt_dlp
 import budoux
-from .google_drive_service import GoogleDriveService
 from pptx import Presentation
 from pptx.util import Inches, Pt
 # pyrefly: ignore [missing-import]
@@ -205,6 +205,132 @@ def sanitize_filename(title: str, max_length: int = 200) -> str:
         sanitized = "presentation"
     
     return sanitized
+
+
+def format_timestamp(seconds: float) -> str:
+    """秒数を mm:ss 形式の文字列に変換する。"""
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def get_scene_text(transcript: list, current_time: float, next_time: float) -> str:
+    """指定区間に含まれる字幕を収集し、スライド向けに整形して返す。"""
+    if not transcript:
+        return ""
+
+    slide_text_list = []
+    for entry in transcript:
+        start = entry["start"]
+        if current_time <= start < next_time:
+            slide_text_list.append(entry["text"])
+
+    return format_slide_text("\n".join(slide_text_list).strip())
+
+
+def create_markdown_package(
+    title: str,
+    scenes: list,
+    transcript: list,
+    task_temp_dir: str,
+    safe_title: str,
+    url: str | None = None,
+    ai_summary_enabled: bool = False,
+    task_state=None
+) -> tuple[str, str, list[str]]:
+    """Markdown ファイルと画像フォルダを生成する。"""
+    asset_dirname = "images"
+    assets_dir = os.path.join(task_temp_dir, asset_dirname)
+    markdown_filename = f"{safe_title}.md"
+    markdown_path = os.path.join(task_temp_dir, markdown_filename)
+    os.makedirs(assets_dir, exist_ok=True)
+    asset_filenames = []
+
+    summarizer = None
+    if ai_summary_enabled:
+        try:
+            summarizer = GeminiSummarizer()
+            print("✓ Gemini API が有効です。Markdown 要約を生成します。")
+        except Exception as e:
+            ai_summary_enabled = False
+            print(f"ℹ Gemini 要約を無効化しました。({e})")
+
+    lines = [
+        f"# {title}",
+        "",
+        "YouTube動画から自動生成されたMarkdown資料",
+        "",
+        f"- スライド枚数: {len(scenes)}",
+    ]
+    if url:
+        lines.extend([
+            f"- URL: {url}",
+        ])
+    lines.append("")
+
+    for i, scene in enumerate(scenes):
+        if task_state:
+            task_state.check_cancelled()
+            progress = 80 + int((i + 1) / len(scenes) * 15)
+            task_state.log(f"Markdown資料を作成中... ({i+1}/{len(scenes)}枚目)", progress)
+
+        current_time = scene["timestamp"]
+        next_time = scenes[i + 1]["timestamp"] if i + 1 < len(scenes) else float("inf")
+        image_name = os.path.basename(scene["image_path"])
+        packaged_image_path = os.path.join(assets_dir, image_name)
+        shutil.copy2(scene["image_path"], packaged_image_path)
+        asset_filenames.append(image_name)
+        image_rel_path = f"./{asset_dirname}/{image_name}"
+
+        slide_text = get_scene_text(transcript, current_time, next_time)
+        display_text = slide_text or "(字幕なし)"
+
+        lines.extend([
+            f"## Slide {i + 1}",
+            "",
+            f"- 開始時刻: {format_timestamp(current_time)}",
+            "",
+            f"![Slide {i + 1}]({image_rel_path})",
+            "",
+        ])
+
+        if ai_summary_enabled and summarizer and slide_text:
+            try:
+                summary_result = summarizer.summarize_slide_content(slide_text)
+                key_points = summary_result.get("key_points") or []
+                main_message = summary_result.get("main_message")
+
+                if key_points:
+                    lines.extend([
+                        "### 要点",
+                        "",
+                    ])
+                    lines.extend([f"- {format_slide_text(point)}" for point in key_points])
+                    lines.append("")
+
+                if main_message:
+                    lines.extend([
+                        "### 最も言いたいこと",
+                        "",
+                        main_message,
+                        "",
+                    ])
+            except Exception as e:
+                print(f"スライド {i+1} の要約生成に失敗: {e}")
+
+        lines.extend([
+            "### 文字起こし",
+            "",
+            display_text.replace("\n", "  \n"),
+            "",
+        ])
+
+    with open(markdown_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    print(f"Markdown ファイルを保存しました: {markdown_path}")
+    print(f"Markdown 画像フォルダを保存しました: {assets_dir}")
+    return markdown_filename, asset_dirname, asset_filenames
 
 
 def extract_video_id(url: str) -> str:
@@ -600,13 +726,7 @@ def create_presentation(
             slide.shapes.add_picture(scene["image_path"], img_left, img_top, width=img_width)
 
             # このスライドの時間範囲に該当する字幕を結合
-            slide_text_list = []
-            for entry in transcript:
-                start = entry["start"]
-                if current_time <= start < next_time:
-                    slide_text_list.append(entry["text"])
-            slide_text = "\n".join(slide_text_list).strip()
-            slide_text = format_slide_text(slide_text)
+            slide_text = get_scene_text(transcript, current_time, next_time)
             if not slide_text:
                 slide_text = "(この区間の文字起こしデータはありません)"
 
@@ -615,10 +735,8 @@ def create_presentation(
             tf = text_box.text_frame
             tf.word_wrap = True
 
-            minutes = int(current_time // 60)
-            seconds = int(current_time % 60)
             p_time = tf.paragraphs[0]
-            p_time.text = f"【シーン開始: {minutes:02d}:{seconds:02d}】"
+            p_time.text = f"【シーン開始: {format_timestamp(current_time)}】"
             p_time.font.size = Pt(14)
             p_time.font.bold = True
             p_time.font.color.rgb = RGBColor(0, 123, 255)
@@ -692,12 +810,10 @@ def create_presentation(
             slide.shapes.add_picture(scene["image_path"], img_left, img_top, width=img_width)
 
             # タイムスタンプのみ表示
-            minutes = int(current_time // 60)
-            seconds = int(current_time % 60)
             ts_box = slide.shapes.add_textbox(Inches(0.2), Inches(0.1), Inches(4.0), Inches(0.5))
             tf = ts_box.text_frame
             p = tf.paragraphs[0]
-            p.text = f"{minutes:02d}:{seconds:02d}"
+            p.text = format_timestamp(current_time)
             p.font.size = Pt(12)
             p.font.color.rgb = RGBColor(150, 150, 150)
 
@@ -783,33 +899,50 @@ def process_youtube_to_presentation(
                     task_state.status = "processing"
                     task_state.log("処理を継続します。", task_state.progress)
 
-        # 4. プレゼンテーションファイルの生成
+        # 4. 出力ファイルの生成
         # ファイル名は動画タイトルをベースに生成（特殊文字を除去）
         safe_title = sanitize_filename(title)
-        output_filename = f"{safe_title}.pptx"
-        output_pptx_path = os.path.join(task_temp_dir, output_filename)
-        
-        # 同じファイル名が既に存在する場合は、UUIDの一部を追加
-        counter = 1
-        base_name = output_filename.replace(".pptx", "")
-        while os.path.exists(output_pptx_path):
-            output_filename = f"{base_name}_{counter}.pptx"
-            output_pptx_path = os.path.join(task_temp_dir, output_filename)
-            counter += 1
-
-        print("PowerPointの生成中...")
-        if task_state:
-            task_state.log("PowerPointプレゼンテーションの生成を開始しました...", 80)
-        create_presentation(title, scenes, transcript, output_pptx_path, url=url, ai_summary_enabled=ai_summary_enabled, task_state=task_state)
-
-        # Googleスライド保存時はGoogleドライブへアップロード・スライド変換
-        google_slides_url = None
-        if save_format == "google_slides":
+        markdown_asset_dirname = None
+        markdown_asset_filenames = []
+        if save_format == "markdown":
+            print("Markdownファイルと画像フォルダの生成中...")
             if task_state:
-                task_state.log("Google スライドへ変換・アップロード中...", 90)
-            print("Googleスライドへアップロード中...")
-            drive_service = GoogleDriveService()
-            google_slides_url = drive_service.upload_and_convert_to_slides(output_pptx_path, output_filename)
+                task_state.log("Markdown資料の生成を開始しました...", 80)
+            output_filename, markdown_asset_dirname, markdown_asset_filenames = create_markdown_package(
+                title=title,
+                scenes=scenes,
+                transcript=transcript,
+                task_temp_dir=task_temp_dir,
+                safe_title=safe_title,
+                url=url,
+                ai_summary_enabled=ai_summary_enabled,
+                task_state=task_state,
+            )
+            download_label = "Markdown 一式を保存"
+        else:
+            output_filename = f"{safe_title}.pptx"
+            output_pptx_path = os.path.join(task_temp_dir, output_filename)
+
+            counter = 1
+            base_name = output_filename.replace(".pptx", "")
+            while os.path.exists(output_pptx_path):
+                output_filename = f"{base_name}_{counter}.pptx"
+                output_pptx_path = os.path.join(task_temp_dir, output_filename)
+                counter += 1
+
+            print("PowerPointの生成中...")
+            if task_state:
+                task_state.log("PowerPointプレゼンテーションの生成を開始しました...", 80)
+            create_presentation(
+                title,
+                scenes,
+                transcript,
+                output_pptx_path,
+                url=url,
+                ai_summary_enabled=ai_summary_enabled,
+                task_state=task_state,
+            )
+            download_label = "PowerPoint をダウンロード"
 
         # フロントエンドに返す結果データを整形
         if task_state:
@@ -820,13 +953,7 @@ def process_youtube_to_presentation(
             next_time = scenes[i + 1]["timestamp"] if i + 1 < len(scenes) else float('inf')
 
             # テキストの再抽出（プレビュー用）
-            slide_text_list = []
-            for entry in transcript:
-                start = entry["start"]
-                if current_time <= start < next_time:
-                    slide_text_list.append(entry["text"])
-            slide_text = " ".join(slide_text_list).strip()
-            slide_text = format_slide_text(slide_text)
+            slide_text = get_scene_text(transcript, current_time, next_time)
 
             formatted_scenes.append({
                 "id": i,
@@ -839,20 +966,21 @@ def process_youtube_to_presentation(
             "success": True,
             "task_id": os.path.basename(task_temp_dir),
             "title": title,
-            "pptx_filename": output_filename,
-            "google_slides_url": google_slides_url,
+            "download_filename": output_filename,
+            "download_label": download_label,
             "save_format": save_format,
+            "asset_dirname": markdown_asset_dirname,
+            "asset_filenames": markdown_asset_filenames,
             "scenes": formatted_scenes,
             "has_transcript": bool(transcript),
         }
 
         if task_state:
-            task_state.log("プレゼンテーションの生成が完了しました！", 100)
+            task_state.log("成果物の生成が完了しました！", 100)
 
         return result
 
     except Exception as e:
-        import shutil
         if task_temp_dir and os.path.exists(task_temp_dir):
             try:
                 shutil.rmtree(task_temp_dir)

@@ -662,6 +662,12 @@ input[type="range"]::-webkit-slider-thumb:hover {
     gap: 24px;
 }
 
+.preview-actions {
+    display: flex;
+    justify-content: center;
+    margin-top: 28px;
+}
+
 .slide-card {
     background: var(--card-bg);
     border: 1px solid var(--card-border);
@@ -806,7 +812,7 @@ footer {
 }
 
 #format-pptx:checked ~ label[for="format-pptx"],
-#format-google:checked ~ label[for="format-google"] {
+#format-markdown:checked ~ label[for="format-markdown"] {
     color: #ffffff;
 }
 
@@ -815,9 +821,9 @@ footer {
     width: 104px; /* PowerPoint の幅 */
 }
 
-#format-google:checked ~ .segmented-slider {
+#format-markdown:checked ~ .segmented-slider {
     left: 106px; /* PowerPointの幅 + 間隔 */
-    width: 125px; /* Google スライド の幅 */
+    width: 104px; /* Markdown の幅 */
 }
 
 .result-actions {

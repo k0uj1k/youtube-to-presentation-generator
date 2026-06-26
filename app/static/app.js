@@ -16,10 +16,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const resultTitle = document.getElementById("result-title");
     const resultSlideCount = document.getElementById("result-slide-count");
     const downloadBtn = document.getElementById("download-btn");
-    const openSlidesBtn = document.getElementById("open-slides-btn");
+    const backToTopBtn = document.getElementById("back-to-top-btn");
     const saveFormatBadge = document.getElementById("save-format-badge");
     const formatPptxRadio = document.getElementById("format-pptx");
-    const formatGoogleRadio = document.getElementById("format-google");
+    const formatMarkdownRadio = document.getElementById("format-markdown");
     const previewContainer = document.getElementById("slides-preview-container");
 
     // 変化レベル（1〜10）のラベルテキスト
@@ -51,12 +51,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function syncSaveFormatState() {
         if (formatPptxRadio && saveFormatBadge) {
-            saveFormatBadge.textContent = formatPptxRadio.checked ? "PowerPoint" : "Google スライド";
+            saveFormatBadge.textContent = formatPptxRadio.checked ? "PowerPoint" : "Markdown";
         }
     }
-    if (formatPptxRadio && formatGoogleRadio) {
+    if (formatPptxRadio && formatMarkdownRadio) {
         formatPptxRadio.addEventListener("change", syncSaveFormatState);
-        formatGoogleRadio.addEventListener("change", syncSaveFormatState);
+        formatMarkdownRadio.addEventListener("change", syncSaveFormatState);
         syncSaveFormatState();
     }
 
@@ -136,6 +136,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const cancelBtn = document.getElementById("cancel-btn");
     let currentTaskId = null;
     let pollingInterval = null;
+    let latestResultData = null;
 
     // キャンセル処理
     cancelBtn.addEventListener("click", async () => {
@@ -163,9 +164,13 @@ document.addEventListener("DOMContentLoaded", () => {
     function resetUI() {
         loadingSection.classList.add("hidden");
         inputSection.classList.remove("hidden");
-        // ダウンロード/スライドボタンの表示を初期化
+        resultSection.classList.add("hidden");
         if (downloadBtn) downloadBtn.classList.remove("hidden");
-        if (openSlidesBtn) openSlidesBtn.classList.add("hidden");
+        const downloadLabel = downloadBtn?.querySelector("span:last-child");
+        if (downloadLabel) {
+            downloadLabel.textContent = formatPptxRadio.checked ? "PowerPoint をダウンロード" : "Markdown 一式を保存";
+        }
+        latestResultData = null;
         // キャンセルボタンの活性化状態をリセット
         cancelBtn.disabled = false;
         cancelBtn.querySelector("span:last-child").textContent = "生成を中止する";
@@ -188,6 +193,87 @@ document.addEventListener("DOMContentLoaded", () => {
     function logMessage(msg) {
         console.log(`> ${msg}`);
     }
+
+    async function fetchArtifact(taskId, artifactPath) {
+        const encodedPath = artifactPath
+            .split("/")
+            .map((segment) => encodeURIComponent(segment))
+            .join("/");
+        const response = await fetch(`/api/artifacts/${encodeURIComponent(taskId)}/${encodedPath}`);
+        if (!response.ok) {
+            throw new Error("成果物ファイルの取得に失敗しました。");
+        }
+        return response.blob();
+    }
+
+    async function fetchMarkdownFile(taskId, filename) {
+        const response = await fetch(`/api/download/${encodeURIComponent(taskId)}/${encodeURIComponent(filename)}`);
+        if (!response.ok) {
+            throw new Error("Markdownファイルの取得に失敗しました。");
+        }
+        return response.text();
+    }
+
+    async function writeTextFile(directoryHandle, filename, content) {
+        const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(content);
+        await writable.close();
+    }
+
+    async function writeBlobFile(directoryHandle, filename, blob) {
+        const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+    }
+
+    async function saveMarkdownArtifacts(resultData) {
+        if (!window.showDirectoryPicker) {
+            throw new Error("このブラウザはフォルダ保存に対応していません。Chromium 系ブラウザを利用してください。");
+        }
+
+        const taskId = resultData.task_id;
+        const markdownFilename = resultData.download_filename;
+        const assetDirname = resultData.asset_dirname;
+        const assetFilenames = resultData.asset_filenames || [];
+
+        if (!taskId || !markdownFilename || !assetDirname) {
+            throw new Error("Markdown 保存に必要な情報が不足しています。");
+        }
+
+        showToast("info", "保存先を選択してください", "選択したフォルダの直下に Markdown ファイルと画像フォルダを保存します。", 4000, { replace: true });
+
+        const directoryHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+        const markdownContent = await fetchMarkdownFile(taskId, markdownFilename);
+        await writeTextFile(directoryHandle, markdownFilename, markdownContent);
+
+        const assetDirectoryHandle = await directoryHandle.getDirectoryHandle(assetDirname, { create: true });
+        for (let i = 0; i < assetFilenames.length; i++) {
+            const assetName = assetFilenames[i];
+            const assetBlob = await fetchArtifact(taskId, `${assetDirname}/${assetName}`);
+            await writeBlobFile(assetDirectoryHandle, assetName, assetBlob);
+        }
+    }
+
+    downloadBtn.addEventListener("click", async (e) => {
+        if (!latestResultData || latestResultData.save_format !== "markdown") {
+            return;
+        }
+
+        e.preventDefault();
+        try {
+            await saveMarkdownArtifacts(latestResultData);
+            showToast("success", "保存完了", "Markdown ファイルと画像フォルダを保存しました。", 4000, { replace: true });
+        } catch (error) {
+            console.error(error);
+            showToast("error", "保存に失敗しました", error.message);
+        }
+    });
+
+    backToTopBtn.addEventListener("click", () => {
+        inputSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
 
     // フォーム送信処理
     form.addEventListener("submit", async (e) => {
@@ -233,7 +319,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     url: url,
                     change_level: changeLevel,
                     ai_summary_enabled: aiSummary,
-                    save_format: formatPptxRadio.checked ? "pptx" : "google_slides"
+                    save_format: formatPptxRadio.checked ? "pptx" : "markdown"
                 })
             });
 
@@ -311,6 +397,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         stopPolling();
                         
                         const resultData = statusData.result || {};
+                        latestResultData = resultData;
                         const scenes = resultData.scenes || [];
                         const scenesLength = scenes.length;
                         showToast("success", "生成完了", `${scenesLength}枚のスライドを生成しました`);
@@ -324,16 +411,18 @@ document.addEventListener("DOMContentLoaded", () => {
                         resultTitle.textContent = resultData.title || "無題";
                         resultSlideCount.textContent = `全 ${scenesLength} 枚のスライドを生成しました`;
                         
-                        // ダウンロードリンクまたはGoogleスライドオープンボタンの設定
-                        if (resultData.save_format === "google_slides" && resultData.google_slides_url) {
-                            downloadBtn.classList.add("hidden");
-                            openSlidesBtn.classList.remove("hidden");
-                            openSlidesBtn.href = resultData.google_slides_url;
+                        // ダウンロードリンクの設定
+                        downloadBtn.classList.remove("hidden");
+                        if (resultData.save_format === "markdown") {
+                            downloadBtn.href = "#";
+                            downloadBtn.removeAttribute("download");
                         } else {
-                            downloadBtn.classList.remove("hidden");
-                            openSlidesBtn.classList.add("hidden");
-                            downloadBtn.href = `/api/download/${resultData.task_id}/${resultData.pptx_filename}`;
-                            downloadBtn.download = (resultData.title || "presentation") + ".pptx";
+                            downloadBtn.href = `/api/download/${encodeURIComponent(resultData.task_id)}/${encodeURIComponent(resultData.download_filename)}`;
+                            downloadBtn.download = resultData.download_filename || (resultData.title || "presentation");
+                        }
+                        const downloadLabel = downloadBtn.querySelector("span:last-child");
+                        if (downloadLabel) {
+                            downloadLabel.textContent = resultData.download_label || "成果物をダウンロード";
                         }
 
                         // プレビューカードの動的生成
