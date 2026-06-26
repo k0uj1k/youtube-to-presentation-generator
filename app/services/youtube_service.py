@@ -952,9 +952,9 @@ def process_youtube_to_presentation(
                     translated_texts = getattr(task_state, "translated_texts", None)
                     if translated_texts and len(translated_texts) == len(transcript):
                         for idx, text in enumerate(translated_texts):
-                            # 各字幕テキストを翻訳されたものに置き換える
-                            transcript[idx]["text"] = text
-                        task_state.log("表示された翻訳テキストを適用しました。", task_state.progress)
+                            # 各字幕テキストを翻訳されたものに置き換え、日本語整形処理を適用する
+                            transcript[idx]["text"] = format_slide_text(text)
+                        task_state.log("表示された翻訳テキストを整形して適用しました。", task_state.progress)
                     else:
                         task_state.log("警告: 翻訳されたテキストの数が一致しないため、置換されませんでした。", task_state.progress)
                 else:
