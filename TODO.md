@@ -37,7 +37,7 @@
   - `extract_video_id()` は YouTube 風の 11 文字 ID を含む任意の文字列を受け付けるが、`download_video()` は元の URL をそのまま `yt-dlp` に渡している。
   - 許可する YouTube ホストを検証するか、抽出した ID から `https://www.youtube.com/watch?v=<video_id>` の正規 URL を組み立てる。
 
-- [ ] **TODO-007: VTT 字幕ファイルの選択を決定的にする**
+- [x] **TODO-007: VTT 字幕ファイルの選択を決定的にする**
   - 対象ファイル: `app/services/subtitle_service.py`
   - `_download_vtt_with_ytdlp()` は一時ディレクトリ内の最初の `*.vtt` を使うため、古いファイルや別言語のファイルを選ぶ可能性がある。
   - ダウンロード前に対象ディレクトリを掃除するか、期待する出力ファイルを厳密に選択する。

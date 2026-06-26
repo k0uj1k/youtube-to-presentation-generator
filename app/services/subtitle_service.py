@@ -113,6 +113,14 @@ class SubtitleFetcher:
         str
             ダウンロードされた VTT ファイルのパス。ない場合は None。
         """
+        # 既存の古い VTT ファイルを削除してクリーンにする
+        if self.temp_dir.exists():
+            for f in self.temp_dir.glob("*.vtt"):
+                try:
+                    f.unlink()
+                except Exception as e:
+                    print(f"古い VTT ファイル {f} のクリーンアップに失敗: {e}")
+
         # yt-dlp コマンドのオプション構築
         cmd = ["yt-dlp", "--skip-download"]
         
@@ -165,10 +173,15 @@ class SubtitleFetcher:
                 
                 print(f"yt-dlp 出力: {result.stdout}")
                 
-                # ダウンロードされたファイルを探す
-                vtt_files = list(self.temp_dir.glob("*.vtt"))
+                # ダウンロードされたファイルを探索する
+                vtt_pattern = f"{self.video_id}.{lang}.vtt" if lang else f"{self.video_id}.*.vtt"
+                vtt_files = list(self.temp_dir.glob(vtt_pattern))
+                if not vtt_files:
+                    # フォールバックとしてすべての .vtt ファイルを検索
+                    vtt_files = list(self.temp_dir.glob("*.vtt"))
+
                 if vtt_files:
-                    vtt_file = vtt_files[0]  # 最初の VTT ファイルを使用
+                    vtt_file = vtt_files[0]
                     print(f"VTT ファイルを取得しました: {vtt_file}")
                     return str(vtt_file)
                 else:
