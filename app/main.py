@@ -67,6 +67,11 @@ class CleanupSessionRequest(BaseModel):
     task_ids: list[str]
 
 
+class ConfirmRequest(BaseModel):
+    action: Literal["abort", "continue", "use_translation", "use_original"]
+    translated_texts: list[str] | None = None
+
+
 @app.post("/api/cleanup-session")
 def cleanup_session(req: CleanupSessionRequest):
     """
@@ -302,6 +307,25 @@ def confirm_task(task_id: str, action: str):
         raise HTTPException(status_code=400, detail="無効なアクションです。")
         
     task_state.confirm_response = action
+    task_state.confirm_event.set()
+    return {"success": True}
+
+
+# ユーザーの確認アクションを受け取るAPI (JSONボディ対応版)
+@app.post("/api/confirm/{task_id}")
+def confirm_task_v2(task_id: str, req: ConfirmRequest):
+    """
+    スライド数超過または翻訳確認に対するユーザーのアクションを受け取る。
+    """
+    validate_task_id(task_id)
+    task_state = tasks.get(task_id)
+    if not task_state:
+        raise HTTPException(status_code=404, detail="指定されたタスクが見つかりません。")
+        
+    task_state.confirm_response = req.action
+    if req.action == "use_translation" and req.translated_texts is not None:
+        task_state.translated_texts = req.translated_texts
+        
     task_state.confirm_event.set()
     return {"success": True}
 

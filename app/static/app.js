@@ -22,6 +22,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const formatMarkdownRadio = document.getElementById("format-markdown");
     const previewContainer = document.getElementById("slides-preview-container");
 
+    const translationConfirmArea = document.getElementById("translation-confirm-area");
+    const translationTextbox = document.getElementById("translation-textbox");
+    const btnUseTranslation = document.getElementById("btn-use-translation");
+    const btnUseOriginal = document.getElementById("btn-use-original");
+
+
     // 変化レベル（1〜10）のラベルテキスト
     const changeLevelTexts = {
         1:  "非常に敏感",
@@ -181,6 +187,22 @@ document.addEventListener("DOMContentLoaded", () => {
         // ログコンテナもクリア
         const logContainer = document.getElementById('log-container');
         if (logContainer) logContainer.innerHTML = "";
+
+        // 翻訳確認UIのリセット
+        if (translationConfirmArea) {
+            translationConfirmArea.classList.add("hidden");
+        }
+        if (btnUseTranslation) {
+            btnUseTranslation.disabled = false;
+        }
+        if (btnUseOriginal) {
+            btnUseOriginal.disabled = false;
+        }
+        // ローダースピナーを元に戻す
+        const spinner = loadingSection.querySelector(".loader-spinner");
+        if (spinner) {
+            spinner.classList.remove("hidden");
+        }
     }
 
     function stopPolling() {
@@ -193,6 +215,80 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function logMessage(msg) {
         console.log(`> ${msg}`);
+    }
+
+    // 翻訳ボタンのクリックイベント設定
+    if (btnUseTranslation && btnUseOriginal) {
+        btnUseTranslation.addEventListener("click", async () => {
+            if (!currentTaskId) return;
+            btnUseTranslation.disabled = true;
+            btnUseOriginal.disabled = true;
+
+            try {
+                const lines = translationTextbox.querySelectorAll(".translation-line");
+                const translatedTexts = Array.from(lines).map(line => line.textContent);
+
+                const response = await fetch(`/api/confirm/${currentTaskId}`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        action: "use_translation",
+                        translated_texts: translatedTexts
+                    })
+                });
+                if (!response.ok) throw new Error("翻訳テキストの送信に失敗しました。");
+
+                translationConfirmArea.classList.add("hidden");
+                const spinner = loadingSection.querySelector(".loader-spinner");
+                if (spinner) spinner.classList.remove("hidden");
+
+                btnUseTranslation.disabled = false;
+                btnUseOriginal.disabled = false;
+
+                // ポーリングを再開
+                pollingInterval = setInterval(pollTask, 1000);
+            } catch (err) {
+                console.error(err);
+                showToast("error", "エラーが発生しました", err.message);
+                btnUseTranslation.disabled = false;
+                btnUseOriginal.disabled = false;
+            }
+        });
+
+        btnUseOriginal.addEventListener("click", async () => {
+            if (!currentTaskId) return;
+            btnUseTranslation.disabled = true;
+            btnUseOriginal.disabled = true;
+
+            try {
+                const response = await fetch(`/api/confirm/${currentTaskId}`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        action: "use_original"
+                    })
+                });
+                if (!response.ok) throw new Error("確認応答 of 送信に失敗しました。");
+
+                translationConfirmArea.classList.add("hidden");
+                const spinner = loadingSection.querySelector(".loader-spinner");
+                if (spinner) spinner.classList.remove("hidden");
+
+                btnUseTranslation.disabled = false;
+                btnUseOriginal.disabled = false;
+
+                pollingInterval = setInterval(pollTask, 1000);
+            } catch (err) {
+                console.error(err);
+                showToast("error", "エラーが発生しました", err.message);
+                btnUseTranslation.disabled = false;
+                btnUseOriginal.disabled = false;
+            }
+        });
     }
 
     async function fetchArtifact(taskId, artifactPath) {
@@ -373,8 +469,14 @@ document.addEventListener("DOMContentLoaded", () => {
                         const action = confirmed ? "abort" : "continue";
 
                         try {
-                            const confirmRes = await fetch(`/api/confirm/${currentTaskId}/${action}`, {
-                                method: "POST"
+                            const confirmRes = await fetch(`/api/confirm/${currentTaskId}`, {
+                                method: "POST",
+                                headers: {
+                                    "Content-Type": "application/json"
+                                },
+                                body: JSON.stringify({
+                                    action: action
+                                })
                             });
                             if (!confirmRes.ok) {
                                 throw new Error("確認応答の送信に失敗しました。");
@@ -394,6 +496,33 @@ document.addEventListener("DOMContentLoaded", () => {
                             resetUI();
                             currentTaskId = null;
                         }
+                        return;
+                    }
+
+                    if (statusData.status === "waiting_translation") {
+                        // 一時的にポーリングを停止
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+
+                        // ローダースピナーを隠す
+                        const spinner = loadingSection.querySelector(".loader-spinner");
+                        if (spinner) spinner.classList.add("hidden");
+
+                        // 翻訳用テキストボックスの表示と初期化
+                        translationConfirmArea.classList.remove("hidden");
+                        translationTextbox.innerHTML = "";
+
+                        const transcript = (statusData.result && statusData.result.transcript) || [];
+                        transcript.forEach((entry, idx) => {
+                            const lineDiv = document.createElement("div");
+                            lineDiv.className = "translation-line";
+                            lineDiv.setAttribute("data-index", idx);
+                            lineDiv.setAttribute("contenteditable", "true");
+                            lineDiv.textContent = entry.text;
+                            translationTextbox.appendChild(lineDiv);
+                        });
+
+                        showToast("warning", "翻訳を確認してください", "字幕が日本語ではありません。ブラウザの翻訳機能等でテキストボックスを翻訳後、「表示テキストを使う」または「使わない」を選択してください。", 8000);
                         return;
                     }
 

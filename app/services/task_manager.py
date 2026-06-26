@@ -16,7 +16,8 @@ class TaskState:
         self.error: Optional[str] = None    # エラー発生時のエラーメッセージ
         self.cancel_event = threading.Event()  # 中止用イベント
         self.confirm_event = threading.Event()  # 確認用イベント
-        self.confirm_response: Optional[str] = None  # 確認応答 ("abort" or "continue")
+        self.confirm_response: Optional[str] = None  # 確認応答 ("abort" or "continue" or "use_translation" or "use_original")
+        self.translated_texts: Optional[List[str]] = None  # 翻訳されたテキストリスト
 
     def log(self, message: str, progress: Optional[int] = None):
         """ログを記録し、進捗率を更新する。キャンセルされている場合は例外を投げる"""

@@ -932,6 +932,38 @@ def process_youtube_to_presentation(
                     task_state.status = "processing"
                     task_state.log("処理を継続します。", task_state.progress)
 
+        # 文字起こしテキストが日本語でない場合の翻訳確認フロー
+        full_text = " ".join([e["text"] for e in transcript]) if transcript else ""
+        if transcript and not is_japanese(full_text):
+            if task_state:
+                task_state.status = "waiting_translation"
+                # フロントエンドに字幕データを渡すため、一時的に result に格納する
+                task_state.result = {
+                    "transcript": transcript
+                }
+                task_state.log("文字起こしテキストの翻訳を確認しています...", task_state.progress)
+                task_state.confirm_event.clear()
+                task_state.confirm_event.wait()
+
+                # 中止された場合は処理を抜ける
+                if task_state.confirm_response == "abort":
+                    raise TaskCancelledException("翻訳確認画面でユーザーによって中止されました。")
+                elif task_state.confirm_response == "use_translation":
+                    translated_texts = getattr(task_state, "translated_texts", None)
+                    if translated_texts and len(translated_texts) == len(transcript):
+                        for idx, text in enumerate(translated_texts):
+                            # 各字幕テキストを翻訳されたものに置き換える
+                            transcript[idx]["text"] = text
+                        task_state.log("表示された翻訳テキストを適用しました。", task_state.progress)
+                    else:
+                        task_state.log("警告: 翻訳されたテキストの数が一致しないため、置換されませんでした。", task_state.progress)
+                else:
+                    task_state.log("元のテキスト（英語のまま）で処理を継続します。", task_state.progress)
+
+                # ステータスを processing に戻し、一時的な result をクリア
+                task_state.status = "processing"
+                task_state.result = None
+
         # 4. 出力ファイルの生成
         # ファイル名は動画タイトルをベースに生成（特殊文字を除去）
         safe_title = sanitize_filename(title)

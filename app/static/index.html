@@ -103,6 +103,33 @@
                 <div class="progress-bar-container">
                     <div class="progress-bar-fill" id="progress-fill"></div>
                 </div>
+                
+                <!-- 翻訳確認エリア (初期状態は非表示) -->
+                <div id="translation-confirm-area" class="hidden" style="margin-top: 24px; text-align: left; width: 100%;">
+                    <hr style="border: 0; border-top: 1px solid var(--card-border); margin-bottom: 20px;">
+                    <h4 style="margin-bottom: 12px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+                        <span class="material-icons-round" style="color: var(--accent-blue);">g_translate</span>
+                        <span>字幕翻訳の確認</span>
+                    </h4>
+                    <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.5;">
+                        文字起こしテキストが日本語ではありません。ブラウザの翻訳機能（右クリックして「日本語に翻訳」など）を使用して、以下のテキストボックス内を日本語に翻訳してください。翻訳後のテキストをスライドの文章として使用できます。
+                    </p>
+                    
+                    <!-- 翻訳対象テキストを表示するコンテナ（contenteditableでブラウザの翻訳が効くようにする） -->
+                    <div id="translation-textbox" class="translation-textbox" contenteditable="true"></div>
+                    
+                    <div class="translation-actions" style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 16px;">
+                        <button type="button" class="btn btn-success" id="btn-use-translation">
+                            <span class="material-icons-round">check</span>
+                            <span>表示テキストを使う</span>
+                        </button>
+                        <button type="button" class="btn btn-secondary" id="btn-use-original">
+                            <span class="material-icons-round">close</span>
+                            <span>使わない（英語のまま）</span>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- 処理中止ボタン -->
                 <button type="button" class="btn btn-danger" id="cancel-btn" style="margin-top: 20px;">
                     <span class="material-icons-round">cancel</span>
