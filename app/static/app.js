@@ -144,6 +144,8 @@ document.addEventListener("DOMContentLoaded", () => {
     let pollingInterval = null;
     let latestResultData = null;
     const sessionTaskIds = [];
+    let pollTask = null;
+
 
     // キャンセル処理
     cancelBtn.addEventListener("click", async () => {
@@ -436,7 +438,7 @@ document.addEventListener("DOMContentLoaded", () => {
             progressFill.classList.add("active");
             progressFill.style.width = "0%";
 
-            const pollTask = async () => {
+            pollTask = async () => {
                 if (!currentTaskId) return;
 
                 try {
