@@ -228,7 +228,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             try {
                 const lines = translationTextbox.querySelectorAll(".translation-line");
-                const translatedTexts = Array.from(lines).map(line => line.textContent);
+                const translatedTexts = Array.from(lines).map(line => line.innerText.trim());
 
                 const response = await fetch(`/api/confirm/${currentTaskId}`, {
                     method: "POST",
@@ -514,14 +514,21 @@ document.addEventListener("DOMContentLoaded", () => {
                         translationConfirmArea.classList.remove("hidden");
                         translationTextbox.innerHTML = "";
 
-                        const transcript = (statusData.result && statusData.result.transcript) || [];
-                        transcript.forEach((entry, idx) => {
-                            const lineDiv = document.createElement("div");
-                            lineDiv.className = "translation-line";
-                            lineDiv.setAttribute("data-index", idx);
-                            lineDiv.setAttribute("contenteditable", "true");
-                            lineDiv.textContent = entry.text;
-                            translationTextbox.appendChild(lineDiv);
+                        const slides = (statusData.result && statusData.result.slides) || [];
+                        slides.forEach((slideData, idx) => {
+                            const slideDiv = document.createElement("div");
+                            slideDiv.className = "translation-slide-block";
+                            slideDiv.setAttribute("data-index", idx);
+                            
+                            const timeStr = formatTime(slideData.timestamp);
+                            slideDiv.innerHTML = `
+                                <div class="translation-slide-header" translate="no" contenteditable="false">
+                                    <span class="material-icons-round" style="font-size: 1rem; vertical-align: middle;">slideshow</span>
+                                    <span>Slide ${slideData.id + 1} (${timeStr})</span>
+                                </div>
+                                <div class="translation-line" contenteditable="true">${escapeHtml(slideData.text)}</div>
+                            `;
+                            translationTextbox.appendChild(slideDiv);
                         });
 
                         showToast("warning", "翻訳を確認してください", "字幕が日本語ではありません。ブラウザの翻訳機能等でテキストボックスを翻訳後、「表示テキストを使う」または「使わない」を選択してください。", 8000);

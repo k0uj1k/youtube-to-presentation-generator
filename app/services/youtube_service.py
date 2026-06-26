@@ -55,18 +55,27 @@ def split_japanese_sentences(text: str) -> str:
     if not text:
         return text
         
-    # 句読点で区切るルール
-    split_punc = functools.partial(split_punctuation, punctuations=r"。!?")
-    
-    # 連結ルール（「の」で終わる文などを結合）
+    split_punc2 = functools.partial(split_punctuation, punctuations=r".。!?")
     concat_tail_no = functools.partial(
         concatenate_matching, 
-        former_matching_rule=r"^(?P<result>.+)(の)$", 
+        former_matching_rule=r"^(?P<result>.+)(の)[.。!?]?$", 
         remove_former_matched=False
+    )
+    concat_tail_te = functools.partial(
+        concatenate_matching, 
+        former_matching_rule=r"^(?P<result>.+)(て)[.。!?]?$", 
+        remove_former_matched=False
+    )
+    concat_decimal = functools.partial(
+        concatenate_matching, 
+        former_matching_rule=r"^(?P<result>.+)(\d\.)$", 
+        latter_matching_rule=r"^(\d)(?P<result>.+)$", 
+        remove_former_matched=False, 
+        remove_latter_matched=False
     )
     
     # パイプライン構築
-    segmenter = make_pipeline(normalize, split_newline, concat_tail_no, split_punc)
+    segmenter = make_pipeline(normalize, split_newline, split_punc2, concat_tail_no, concat_tail_te, concat_decimal)
     
     # セグメント実行
     sentences = list(segmenter(text))
@@ -228,6 +237,20 @@ def get_scene_text(transcript: list, current_time: float, next_time: float) -> s
     return format_slide_text("\n".join(slide_text_list).strip())
 
 
+def get_scene_text_raw(transcript: list, current_time: float, next_time: float) -> str:
+    """指定区間に含まれる字幕を収集し、改行で結合した生テキストを返す（整形前）。"""
+    if not transcript:
+        return ""
+
+    slide_text_list = []
+    for entry in transcript:
+        start = entry["start"]
+        if current_time <= start < next_time:
+            slide_text_list.append(entry["text"])
+
+    return "\n".join(slide_text_list).strip()
+
+
 def create_markdown_package(
     title: str,
     scenes: list,
@@ -236,7 +259,8 @@ def create_markdown_package(
     safe_title: str,
     url: str | None = None,
     ai_summary_enabled: bool = False,
-    task_state=None
+    task_state=None,
+    slide_texts: list[str] | None = None
 ) -> tuple[str, str, list[str]]:
     """Markdown ファイルと画像フォルダを生成する。"""
     asset_dirname = "images"
@@ -282,7 +306,10 @@ def create_markdown_package(
         asset_filenames.append(image_name)
         image_rel_path = f"./{asset_dirname}/{image_name}"
 
-        slide_text = get_scene_text(transcript, current_time, next_time)
+        if slide_texts is not None and i < len(slide_texts):
+            slide_text = slide_texts[i]
+        else:
+            slide_text = get_scene_text(transcript, current_time, next_time)
         display_text = slide_text or "(字幕なし)"
 
         lines.extend([
@@ -678,7 +705,8 @@ def create_presentation(
     output_pptx_path: str,
     url: str | None = None,
     ai_summary_enabled: bool = False,
-    task_state = None
+    task_state = None,
+    slide_texts: list[str] | None = None
 ):
     """
     抽出した画像と文字起こしテキストをマッピングし、PowerPointプレゼンテーションを生成する。
@@ -756,7 +784,10 @@ def create_presentation(
             slide.shapes.add_picture(scene["image_path"], img_left, img_top, width=img_width)
 
             # このスライドの時間範囲に該当する字幕を結合
-            slide_text = get_scene_text(transcript, current_time, next_time)
+            if slide_texts is not None and i < len(slide_texts):
+                slide_text = slide_texts[i]
+            else:
+                slide_text = get_scene_text(transcript, current_time, next_time)
             if not slide_text:
                 slide_text = "(この区間の文字起こしデータはありません)"
 
@@ -932,16 +963,34 @@ def process_youtube_to_presentation(
                     task_state.status = "processing"
                     task_state.log("処理を継続します。", task_state.progress)
 
-        # 文字起こしテキストが日本語でない場合の翻訳確認フロー
-        full_text = " ".join([e["text"] for e in transcript]) if transcript else ""
-        if transcript and not is_japanese(full_text):
+        # 各スライドのテキストの塊（生字幕）を事前に抽出する
+        raw_slide_texts = []
+        for i, scene in enumerate(scenes):
+            current_time = scene["timestamp"]
+            next_time = scenes[i + 1]["timestamp"] if i + 1 < len(scenes) else float('inf')
+            raw_text = get_scene_text_raw(transcript, current_time, next_time)
+            raw_slide_texts.append(raw_text)
+
+        # 翻訳されたスライドテキストの配列
+        translated_slide_texts = None
+
+        # 文字起こしテキストが日本語でない場合の翻訳確認フロー（スライドの塊単位）
+        full_raw_text = "\n".join(raw_slide_texts)
+        if transcript and not is_japanese(full_raw_text):
             if task_state:
                 task_state.status = "waiting_translation"
-                # フロントエンドに字幕データを渡すため、一時的に result に格納する
+                # フロントエンドにスライドごとの塊データを渡す
                 task_state.result = {
-                    "transcript": transcript
+                    "slides": [
+                        {
+                            "id": i,
+                            "timestamp": scene["timestamp"],
+                            "text": raw_slide_texts[i]
+                        }
+                        for i, scene in enumerate(scenes)
+                    ]
                 }
-                task_state.log("文字起こしテキストの翻訳を確認しています...", task_state.progress)
+                task_state.log("スライドに貼る文章の翻訳を確認しています...", task_state.progress)
                 task_state.confirm_event.clear()
                 task_state.confirm_event.wait()
 
@@ -950,10 +999,11 @@ def process_youtube_to_presentation(
                     raise TaskCancelledException("翻訳確認画面でユーザーによって中止されました。")
                 elif task_state.confirm_response == "use_translation":
                     translated_texts = getattr(task_state, "translated_texts", None)
-                    if translated_texts and len(translated_texts) == len(transcript):
-                        for idx, text in enumerate(translated_texts):
-                            # 各字幕テキストを翻訳されたものに置き換え、日本語整形処理を適用する
-                            transcript[idx]["text"] = format_slide_text(text)
+                    if translated_texts and len(translated_texts) == len(scenes):
+                        translated_slide_texts = []
+                        for text in translated_texts:
+                            # 各スライドテキストに日本語整形処理を適用する
+                            translated_slide_texts.append(format_slide_text(text))
                         task_state.log("表示された翻訳テキストを整形して適用しました。", task_state.progress)
                     else:
                         task_state.log("警告: 翻訳されたテキストの数が一致しないため、置換されませんでした。", task_state.progress)
@@ -982,6 +1032,7 @@ def process_youtube_to_presentation(
                 url=url,
                 ai_summary_enabled=ai_summary_enabled,
                 task_state=task_state,
+                slide_texts=translated_slide_texts,
             )
             download_label = "Markdown 一式を保存"
         else:
@@ -1006,6 +1057,7 @@ def process_youtube_to_presentation(
                 url=url,
                 ai_summary_enabled=ai_summary_enabled,
                 task_state=task_state,
+                slide_texts=translated_slide_texts,
             )
             download_label = "PowerPoint をダウンロード"
 
@@ -1018,7 +1070,10 @@ def process_youtube_to_presentation(
             next_time = scenes[i + 1]["timestamp"] if i + 1 < len(scenes) else float('inf')
 
             # テキストの再抽出（プレビュー用）
-            slide_text = get_scene_text(transcript, current_time, next_time)
+            if translated_slide_texts is not None and i < len(translated_slide_texts):
+                slide_text = translated_slide_texts[i]
+            else:
+                slide_text = get_scene_text(transcript, current_time, next_time)
 
             formatted_scenes.append({
                 "id": i,
