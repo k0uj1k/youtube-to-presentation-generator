@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.services.youtube_service import process_youtube_to_presentation, TEMP_DIR
 from app.services.task_manager import tasks, TaskState, TaskCancelledException
 
@@ -58,7 +58,7 @@ def get_secure_path(task_id: str, path_suffix: str) -> str:
 # リクエストスキーマ
 class GenerateRequest(BaseModel):
     url: str
-    change_level: int = 5  # 変化検知レベル（1=最敏感 〜 10=最鈍感）
+    change_level: int = Field(default=5, ge=1, le=10, description="変化検知レベル（1=最敏感 〜 10=最鈍感）")
     ai_summary_enabled: bool = False
     save_format: Literal["pptx", "markdown"] = "pptx"
 
