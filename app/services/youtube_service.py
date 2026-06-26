@@ -337,6 +337,35 @@ def extract_video_id(url: str) -> str:
     """
     YouTubeのURLから動画IDを抽出する。
     """
+    # 許可するホスト名の確認 (スキームが含まれている、またはプロトコル相対の場合)
+    if "://" in url or url.startswith("//"):
+        from urllib.parse import urlparse
+        try:
+            url_to_parse = "http:" + url if url.startswith("//") else url
+            parsed_url = urlparse(url_to_parse)
+            
+            if parsed_url.scheme not in ["http", "https"]:
+                raise ValueError("許可されていない URL スキームです。")
+                
+            netloc = parsed_url.netloc.lower()
+            allowed_hosts = [
+                "youtube.com", "www.youtube.com", "m.youtube.com",
+                "youtu.be", "www.youtu.be", "music.youtube.com"
+            ]
+            
+            is_valid_host = False
+            for host in allowed_hosts:
+                if netloc == host or netloc.endswith("." + host):
+                    is_valid_host = True
+                    break
+                    
+            if not is_valid_host:
+                raise ValueError("YouTube 以外のホスト名からのダウンロードは許可されていません。")
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise e
+            raise ValueError("無効な URL 形式です。")
+
     # クエリパラメータ v= から抽出
     if "v=" in url:
         match = re.search(r"v=([0-9A-Za-z_-]{11})", url)
@@ -358,14 +387,15 @@ def extract_video_id(url: str) -> str:
     # その他のURLパターンからのフォールバック抽出
     patterns = [
         r"embed\/([0-9A-Za-z_-]{11})",
-        r"\/([0-9A-Za-z_-]{11})"
+        r"\/([0-9A-Za-z_-]{11})",
+        r"^([0-9A-Za-z_-]{11})$"  # 11文字の動画IDそのものを許可するパターン
     ]
     for pattern in patterns:
         match = re.search(pattern, url)
         if match:
             return match.group(1)
 
-    raise ValueError("無効なYouTube URLです。")
+    raise ValueError("無効なYouTube URLまたは動画IDです。")
 
 
 def get_transcript(url: str, video_id: str) -> list:
@@ -842,6 +872,9 @@ def process_youtube_to_presentation(
         True のときだけ Gemini 要約を有効化する。
     """
     video_id = extract_video_id(url)
+    
+    # 安全対策として、抽出した動画IDから正規のYouTube URLを再構築する
+    url = f"https://www.youtube.com/watch?v={video_id}"
 
     # 1. 字幕の取得（失敗しても処理続行）
     if task_state:

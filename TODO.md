@@ -32,7 +32,7 @@
   - コードは先に `google.genai` を import しているが、呼び出しは `google.generativeai` の `configure()` と `GenerativeModel()` に依存している。
   - `google-generativeai` のみに寄せるか、新しい `google.genai` クライアント用の実装に更新する。
 
-- [ ] **TODO-006: ダウンロード前に YouTube URL を検証・正規化する**
+- [x] **TODO-006: ダウンロード前に YouTube URL を検証・正規化する**
   - 対象ファイル: `app/services/youtube_service.py`
   - `extract_video_id()` は YouTube 風の 11 文字 ID を含む任意の文字列を受け付けるが、`download_video()` は元の URL をそのまま `yt-dlp` に渡している。
   - 許可する YouTube ホストを検証するか、抽出した ID から `https://www.youtube.com/watch?v=<video_id>` の正規 URL を組み立てる。
