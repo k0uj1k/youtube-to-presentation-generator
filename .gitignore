@@ -32,6 +32,12 @@ cache/
 .tmp/
 .agy/
 .agy
+.codex
 
 # credentials
 .env*
+.setup-tmp/
+
+# binary
+*.exe
+
