@@ -27,6 +27,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnUseTranslation = document.getElementById("btn-use-translation");
     const btnUseOriginal = document.getElementById("btn-use-original");
 
+    const limitConfirmArea = document.getElementById("limit-confirm-area");
+    const btnConfirmAbort = document.getElementById("btn-confirm-abort");
+    const btnConfirmContinue = document.getElementById("btn-confirm-continue");
+
+    const imageFormatBadge = document.getElementById("image-format-badge");
+    const imageFormatJpegRadio = document.getElementById("image-format-jpeg");
+    const imageFormatPngRadio = document.getElementById("image-format-png");
+
 
     // 変化レベル（1〜10）のラベルテキスト
     const changeLevelTexts = {
@@ -64,6 +72,17 @@ document.addEventListener("DOMContentLoaded", () => {
         formatPptxRadio.addEventListener("change", syncSaveFormatState);
         formatMarkdownRadio.addEventListener("change", syncSaveFormatState);
         syncSaveFormatState();
+    }
+
+    function syncImageFormatState() {
+        if (imageFormatJpegRadio && imageFormatBadge) {
+            imageFormatBadge.textContent = imageFormatJpegRadio.checked ? "JPEG" : "PNG";
+        }
+    }
+    if (imageFormatJpegRadio && imageFormatPngRadio) {
+        imageFormatJpegRadio.addEventListener("change", syncImageFormatState);
+        imageFormatPngRadio.addEventListener("change", syncImageFormatState);
+        syncImageFormatState();
     }
 
     // 秒数を分:秒フォーマットに変換するヘルパー関数
@@ -200,6 +219,16 @@ document.addEventListener("DOMContentLoaded", () => {
         if (btnUseOriginal) {
             btnUseOriginal.disabled = false;
         }
+        // 制限確認UIのリセット
+        if (limitConfirmArea) {
+            limitConfirmArea.classList.add("hidden");
+        }
+        if (btnConfirmAbort) {
+            btnConfirmAbort.disabled = false;
+        }
+        if (btnConfirmContinue) {
+            btnConfirmContinue.disabled = false;
+        }
         // ローダースピナーを元に戻す
         const spinner = loadingSection.querySelector(".loader-spinner");
         if (spinner) {
@@ -293,6 +322,78 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // スライド数確認ボタンのクリックイベント設定
+    if (btnConfirmAbort && btnConfirmContinue) {
+        btnConfirmAbort.addEventListener("click", async () => {
+            if (!currentTaskId) return;
+            btnConfirmAbort.disabled = true;
+            btnConfirmContinue.disabled = true;
+
+            try {
+                const response = await fetch(`/api/confirm/${currentTaskId}`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        action: "abort"
+                    })
+                });
+                if (!response.ok) throw new Error("確認応答の送信に失敗しました。");
+
+                limitConfirmArea.classList.add("hidden");
+                const spinner = loadingSection.querySelector(".loader-spinner");
+                if (spinner) spinner.classList.remove("hidden");
+
+                btnConfirmAbort.disabled = false;
+                btnConfirmContinue.disabled = false;
+
+                showToast("info", "処理中止", "処理を中止しました。");
+                resetUI();
+                currentTaskId = null;
+            } catch (err) {
+                console.error(err);
+                showToast("error", "エラーが発生しました", err.message);
+                btnConfirmAbort.disabled = false;
+                btnConfirmContinue.disabled = false;
+            }
+        });
+
+        btnConfirmContinue.addEventListener("click", async () => {
+            if (!currentTaskId) return;
+            btnConfirmAbort.disabled = true;
+            btnConfirmContinue.disabled = true;
+
+            try {
+                const response = await fetch(`/api/confirm/${currentTaskId}`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        action: "continue"
+                    })
+                });
+                if (!response.ok) throw new Error("確認応答の送信に失敗しました。");
+
+                limitConfirmArea.classList.add("hidden");
+                const spinner = loadingSection.querySelector(".loader-spinner");
+                if (spinner) spinner.classList.remove("hidden");
+
+                btnConfirmAbort.disabled = false;
+                btnConfirmContinue.disabled = false;
+
+                // ポーリングを再開
+                pollingInterval = setInterval(pollTask, 1000);
+            } catch (err) {
+                console.error(err);
+                showToast("error", "エラーが発生しました", err.message);
+                btnConfirmAbort.disabled = false;
+                btnConfirmContinue.disabled = false;
+            }
+        });
+    }
+
     async function fetchArtifact(taskId, artifactPath) {
         const encodedPath = artifactPath
             .split("/")
@@ -306,7 +407,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function fetchMarkdownFile(taskId, filename) {
-        const response = await fetch(`/api/download/${encodeURIComponent(taskId)}/${encodeURIComponent(filename)}`);
+        const response = await fetch(`/api/artifacts/${encodeURIComponent(taskId)}/${filename}`);
         if (!response.ok) {
             throw new Error("Markdownファイルの取得に失敗しました。");
         }
@@ -341,17 +442,23 @@ document.addEventListener("DOMContentLoaded", () => {
             throw new Error("Markdown 保存に必要な情報が不足しています。");
         }
 
-        showToast("info", "保存先を選択してください", "選択したフォルダの直下に Markdown ファイルと画像フォルダを保存します。", 4000, { replace: true });
+        showToast("info", "保存先を選択してください", "選択したフォルダ内にタイトル名のフォルダを新規作成し、そこにファイルを保存します。", 4000, { replace: true });
 
         const directoryHandle = await window.showDirectoryPicker({ mode: "readwrite" });
         const markdownContent = await fetchMarkdownFile(taskId, markdownFilename);
-        await writeTextFile(directoryHandle, markdownFilename, markdownContent);
+        
+        // タイトル名のフォルダを新規に作成し、そのフォルダに対して書き込む
+        const projectDirectoryHandle = await directoryHandle.getDirectoryHandle(assetDirname, { create: true });
 
-        const assetDirectoryHandle = await directoryHandle.getDirectoryHandle(assetDirname, { create: true });
+        // タイトル名.md として同じフォルダに保存
+        const markdownBaseName = `${assetDirname}.md`;
+        await writeTextFile(projectDirectoryHandle, markdownBaseName, markdownContent);
+
+        // 同じフォルダにスライド画像を保存
         for (let i = 0; i < assetFilenames.length; i++) {
             const assetName = assetFilenames[i];
             const assetBlob = await fetchArtifact(taskId, `${assetDirname}/${assetName}`);
-            await writeBlobFile(assetDirectoryHandle, assetName, assetBlob);
+            await writeBlobFile(projectDirectoryHandle, assetName, assetBlob);
         }
     }
 
@@ -418,7 +525,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     url: url,
                     change_level: changeLevel,
                     ai_summary_enabled: aiSummary,
-                    save_format: formatPptxRadio.checked ? "pptx" : "markdown"
+                    save_format: formatPptxRadio.checked ? "pptx" : "markdown",
+                    image_format: imageFormatJpegRadio.checked ? "jpeg" : "png"
                 })
             });
 
@@ -467,37 +575,12 @@ document.addEventListener("DOMContentLoaded", () => {
                         clearInterval(pollingInterval);
                         pollingInterval = null;
 
-                        const confirmed = confirm("スライドが100枚を超えます　中止しますか？");
-                        const action = confirmed ? "abort" : "continue";
+                        // ローダースピナーを隠す
+                        const spinner = loadingSection.querySelector(".loader-spinner");
+                        if (spinner) spinner.classList.add("hidden");
 
-                        try {
-                            const confirmRes = await fetch(`/api/confirm/${currentTaskId}`, {
-                                method: "POST",
-                                headers: {
-                                    "Content-Type": "application/json"
-                                },
-                                body: JSON.stringify({
-                                    action: action
-                                })
-                            });
-                            if (!confirmRes.ok) {
-                                throw new Error("確認応答の送信に失敗しました。");
-                            }
-
-                            if (action === "abort") {
-                                showToast("info", "処理中止", "処理を中止しました。");
-                                resetUI();
-                                currentTaskId = null;
-                            } else {
-                                // 継続ならポーリング再開
-                                pollingInterval = setInterval(pollTask, 1000);
-                            }
-                        } catch (confirmErr) {
-                            console.error(confirmErr);
-                            showToast("error", "エラーが発生しました", confirmErr.message);
-                            resetUI();
-                            currentTaskId = null;
-                        }
+                        // 確認エリアを表示
+                        limitConfirmArea.classList.remove("hidden");
                         return;
                     }
 

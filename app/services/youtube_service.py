@@ -263,11 +263,11 @@ def create_markdown_package(
     slide_texts: list[str] | None = None
 ) -> tuple[str, str, list[str]]:
     """Markdown ファイルと画像フォルダを生成する。"""
-    asset_dirname = "images"
-    assets_dir = os.path.join(task_temp_dir, asset_dirname)
-    markdown_filename = f"{safe_title}.md"
+    # タイトル名のフォルダを新規に作成
+    output_dir = os.path.join(task_temp_dir, safe_title)
+    markdown_filename = f"{safe_title}/{safe_title}.md"
     markdown_path = os.path.join(task_temp_dir, markdown_filename)
-    os.makedirs(assets_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     asset_filenames = []
 
     summarizer = None
@@ -301,10 +301,12 @@ def create_markdown_package(
         current_time = scene["timestamp"]
         next_time = scenes[i + 1]["timestamp"] if i + 1 < len(scenes) else float("inf")
         image_name = os.path.basename(scene["image_path"])
-        packaged_image_path = os.path.join(assets_dir, image_name)
+        # 同じフォルダにスライド画像を保存
+        packaged_image_path = os.path.join(output_dir, image_name)
         shutil.copy2(scene["image_path"], packaged_image_path)
         asset_filenames.append(image_name)
-        image_rel_path = f"./{asset_dirname}/{image_name}"
+        # 画像の相対パスは同じフォルダ内のため、単純なファイル名（./ファイル名）にする
+        image_rel_path = f"./{image_name}"
 
         if slide_texts is not None and i < len(slide_texts):
             slide_text = slide_texts[i]
@@ -356,8 +358,8 @@ def create_markdown_package(
         f.write("\n".join(lines))
 
     print(f"Markdown ファイルを保存しました: {markdown_path}")
-    print(f"Markdown 画像フォルダを保存しました: {assets_dir}")
-    return markdown_filename, asset_dirname, asset_filenames
+    print(f"Markdown 画像を保存しました: {output_dir}")
+    return markdown_filename, safe_title, asset_filenames
 
 
 def extract_video_id(url: str) -> str:
@@ -585,7 +587,8 @@ def get_keyframe_timestamps_cached(video_path: str, cap: cv2.VideoCapture) -> li
 def detect_static_scenes(
     video_path: str,
     change_level: int = 5,
-    task_state = None
+    task_state = None,
+    image_format: str = "jpeg"
 ) -> tuple:
     """
     I フレーム（キーフレーム）を順に参照し、基準フレームとの差分が
@@ -640,9 +643,12 @@ def detect_static_scenes(
     task_temp_dir = os.path.join(TEMP_DIR, task_id)
     os.makedirs(task_temp_dir, exist_ok=True)
 
+    # 拡張子を決定 (png or jpg)
+    ext = "png" if image_format.lower() == "png" else "jpg"
+
     def save_scene(frame, timestamp: float) -> None:
         slide_index = len(scenes)
-        img_name = f"slide_{slide_index}_{int(timestamp)}.jpg"
+        img_name = f"slide_{slide_index}_{int(timestamp)}.{ext}"
         img_path = os.path.join(task_temp_dir, img_name)
         cv2.imwrite(img_path, frame)
         scenes.append({
@@ -776,11 +782,21 @@ def create_presentation(
 
         slide = prs.slides.add_slide(blank_slide_layout)
 
+        # レイアウト共通パラメータ (スライド幅 13.333, 高さ 7.5)
+        # 画像幅は全体の 68% (約 9.066 インチ)
+        img_width = Inches(13.333 * 0.68)
+        # 画像高さも全体の 68% (約 5.1 インチ、16:9比を維持)
+        img_height = Inches(7.5 * 0.68)
+        img_left = Inches(0.4) # 左寄せ余白 0.4
+        img_top = Inches((7.5 - 7.5 * 0.68) / 2) # 上下中央寄せ (1.2)
+
+        # テキストボックス位置 (画像と重ならない右側)
+        text_left = img_left + img_width + Inches(0.4) # 約 9.866
+        text_width = Inches(13.333) - text_left - Inches(0.4) # 約 3.067
+        text_top = img_top
+        text_height = img_height
+
         if has_transcript:
-            # 左側: 画像（幅 5.8インチ）
-            img_left = Inches(0.8)
-            img_top = Inches(1.5)
-            img_width = Inches(5.8)
             slide.shapes.add_picture(scene["image_path"], img_left, img_top, width=img_width)
 
             # このスライドの時間範囲に該当する字幕を結合
@@ -789,10 +805,10 @@ def create_presentation(
             else:
                 slide_text = get_scene_text(transcript, current_time, next_time)
             if not slide_text:
-                slide_text = "(この区間の文字起こしデータはありません)"
+                slide_text = "(字幕なし)"
 
             # 右側: テキストボックス
-            text_box = slide.shapes.add_textbox(Inches(7.0), Inches(1.5), Inches(5.5), Inches(4.5))
+            text_box = slide.shapes.add_textbox(text_left, text_top, text_width, text_height)
             tf = text_box.text_frame
             tf.word_wrap = True
 
@@ -804,7 +820,7 @@ def create_presentation(
             p_time.space_after = Pt(10)
 
             # === Gemini で要約を生成 ===
-            if ai_summary_enabled and summarizer and slide_text and "(この区間の文字起こしデータはありません)" not in slide_text:
+            if ai_summary_enabled and summarizer and slide_text and "(字幕なし)" not in slide_text:
                 try:
                     summary_result = summarizer.summarize_slide_content(slide_text)
 
@@ -864,19 +880,18 @@ def create_presentation(
                 p_content.line_spacing = 1.3
 
         else:
-            # 字幕なし: 画像をスライド全体に広げて配置
-            img_left = Inches(0.8)
-            img_top = Inches(0.8)
-            img_width = Inches(11.733)
+            # 字幕なし: 画像は同じく左寄せ中央の68%
             slide.shapes.add_picture(scene["image_path"], img_left, img_top, width=img_width)
 
-            # タイムスタンプのみ表示
-            ts_box = slide.shapes.add_textbox(Inches(0.2), Inches(0.1), Inches(4.0), Inches(0.5))
+            # 右側: タイムスタンプのみ表示 (画像に重ならないように配置)
+            ts_box = slide.shapes.add_textbox(text_left, text_top, text_width, text_height)
             tf = ts_box.text_frame
+            tf.word_wrap = True
             p = tf.paragraphs[0]
-            p.text = format_timestamp(current_time)
-            p.font.size = Pt(12)
-            p.font.color.rgb = RGBColor(150, 150, 150)
+            p.text = f"【シーン開始: {format_timestamp(current_time)}】"
+            p.font.size = Pt(14)
+            p.font.bold = True
+            p.font.color.rgb = RGBColor(0, 123, 255)
 
     prs.save(output_pptx_path)
     print(f"PowerPointファイルを保存しました: {output_pptx_path}")
@@ -887,7 +902,8 @@ def process_youtube_to_presentation(
     change_level: int = 5,
     ai_summary_enabled: bool = False,
     save_format: str = "pptx",
-    task_state = None
+    task_state = None,
+    image_format: str = "jpeg"
 ) -> dict:
     """
     YouTube URL からプレゼンテーションを生成する一連の処理を実行する。
@@ -941,7 +957,8 @@ def process_youtube_to_presentation(
         scenes, task_temp_dir = detect_static_scenes(
             temp_video_path,
             change_level=change_level,
-            task_state=task_state
+            task_state=task_state,
+            image_format=image_format
         )
 
         if not scenes:

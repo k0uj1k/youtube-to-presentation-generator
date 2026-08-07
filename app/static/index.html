@@ -86,6 +86,23 @@
                                 <div class="segmented-slider"></div>
                             </div>
                         </div>
+                    <div class="input-group" style="margin-bottom: 24px;">
+                        <div class="label-with-value">
+                            <label>画像フォーマット</label>
+                            <span class="badge" id="image-format-badge">JPEG</span>
+                        </div>
+                        <div class="switch-row">
+                            <span class="switch-hint">抽出するスライド画像の保存形式を選択します</span>
+                            <div class="segmented-control image-format-control">
+                                <input type="radio" id="image-format-jpeg" name="image-format" value="jpeg" checked>
+                                <label for="image-format-jpeg">JPEG</label>
+                                
+                                <input type="radio" id="image-format-png" name="image-format" value="png">
+                                <label for="image-format-png">PNG</label>
+                                
+                                <div class="segmented-slider image-format-slider"></div>
+                            </div>
+                        </div>
                     </div>
 
                     <button type="submit" class="btn btn-primary" id="submit-btn">
@@ -104,6 +121,29 @@
                     <div class="progress-bar-fill" id="progress-fill"></div>
                 </div>
                 
+                <!-- スライド数制限確認エリア (初期状態は非表示) -->
+                <div id="limit-confirm-area" class="hidden" style="margin-top: 24px; text-align: left; width: 100%;">
+                    <hr style="border: 0; border-top: 1px solid var(--card-border); margin-bottom: 20px;">
+                    <h4 style="margin-bottom: 12px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+                        <span class="material-icons-round" style="color: var(--accent-orange, #f59e0b);">warning</span>
+                        <span>スライド数が100枚を超えました</span>
+                    </h4>
+                    <p style="font-size: 0.95rem; color: var(--text-primary); margin-bottom: 16px; line-height: 1.5;">
+                        生成されるスライドの数が100枚を超えています。処理を中断しますか、それともこのまま続けますか？
+                    </p>
+                    
+                    <div class="confirm-actions" style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 16px;">
+                        <button type="button" class="btn btn-danger" id="btn-confirm-abort" style="background: var(--accent-red, #ef4444); border-color: var(--accent-red, #ef4444); color: white;">
+                            <span class="material-icons-round">cancel</span>
+                            <span>中断する</span>
+                        </button>
+                        <button type="button" class="btn btn-primary" id="btn-confirm-continue">
+                            <span class="material-icons-round">play_arrow</span>
+                            <span>続ける</span>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- 翻訳確認エリア (初期状態は非表示) -->
                 <div id="translation-confirm-area" class="hidden" style="margin-top: 24px; text-align: left; width: 100%;">
                     <hr style="border: 0; border-top: 1px solid var(--card-border); margin-bottom: 20px;">
