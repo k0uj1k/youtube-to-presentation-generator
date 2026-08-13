@@ -648,7 +648,8 @@ def detect_static_scenes(
 
     def save_scene(frame, timestamp: float) -> None:
         slide_index = len(scenes)
-        img_name = f"slide_{slide_index}_{int(timestamp)}.{ext}"
+        ts_str = format_timestamp(timestamp).replace(":", "")
+        img_name = f"slide_{slide_index}_{ts_str}.{ext}"
         img_path = os.path.join(task_temp_dir, img_name)
         cv2.imwrite(img_path, frame)
         scenes.append({
