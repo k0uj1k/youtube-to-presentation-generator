@@ -152,7 +152,7 @@ class SubtitleFetcher:
         cmd.append(self.url)
         
         # yt-dlp を実行
-        max_retries = 3
+        max_retries = 2
         for attempt in range(max_retries):
             try:
                 print(f"字幕ダウンロード中 (試行 {attempt + 1}/{max_retries}): {' '.join(cmd)}")
@@ -166,8 +166,8 @@ class SubtitleFetcher:
                 if result.returncode != 0:
                     print(f"yt-dlp エラー: {result.stderr}")
                     if attempt < max_retries - 1:
-                        print("字幕のダウンロードに失敗しました。3秒後にリトライします。")
-                        time.sleep(3)
+                        print("字幕のダウンロードに失敗しました。5秒後にリトライします。")
+                        time.sleep(5)
                         continue
                     return None
                 
@@ -187,16 +187,16 @@ class SubtitleFetcher:
                 else:
                     print(f"VTT ファイルが見つかりません。タイプ: {subtitle_type}, 言語: {lang}")
                     if attempt < max_retries - 1:
-                        print("3秒後にリトライします。")
-                        time.sleep(3)
+                        print("5秒後にリトライします。")
+                        time.sleep(5)
                         continue
                     return None
                     
             except subprocess.TimeoutExpired:
                 print("yt-dlp コマンドがタイムアウトしました。")
                 if attempt < max_retries - 1:
-                    print("3秒後にリトライします。")
-                    time.sleep(3)
+                    print("5秒後にリトライします。")
+                    time.sleep(5)
                     continue
                 return None
             except FileNotFoundError:
@@ -205,8 +205,8 @@ class SubtitleFetcher:
             except Exception as e:
                 print(f"yt-dlp 実行中にエラーが発生しました: {e}")
                 if attempt < max_retries - 1:
-                    print("3秒後にリトライします。")
-                    time.sleep(3)
+                    print("5秒後にリトライします。")
+                    time.sleep(5)
                     continue
                 return None
 

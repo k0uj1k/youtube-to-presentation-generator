@@ -59,9 +59,7 @@ def get_secure_path(task_id: str, path_suffix: str) -> str:
 class GenerateRequest(BaseModel):
     url: str
     change_level: int = Field(default=5, ge=1, le=10, description="変化検知レベル（1=最敏感 〜 10=最鈍感）")
-    ai_summary_enabled: bool = False
     save_format: Literal["pptx", "markdown"] = "pptx"
-    image_format: Literal["jpeg", "png"] = "jpeg"
 
 
 class CleanupSessionRequest(BaseModel):
@@ -192,7 +190,7 @@ def shutdown_event():
             except Exception as e:
                 print(f"[SHUTDOWN CLEANUP] 字幕キャッシュの削除に失敗 {path}: {e}")
 
-def _run_generation_task(task_id: str, url: str, change_level: int, ai_summary_enabled: bool, save_format: str, image_format: str):
+def _run_generation_task(task_id: str, url: str, change_level: int, save_format: str):
     """バックグラウンドでプレゼンテーション生成を実行するスレッド用関数"""
     task_state = tasks.get(task_id)
     if not task_state:
@@ -202,9 +200,7 @@ def _run_generation_task(task_id: str, url: str, change_level: int, ai_summary_e
         result = process_youtube_to_presentation(
             url=url,
             change_level=change_level,
-            ai_summary_enabled=ai_summary_enabled,
             save_format=save_format,
-            image_format=image_format,
             task_state=task_state
         )
         task_state.result = result
@@ -247,7 +243,7 @@ def generate_presentation_api(req: GenerateRequest):
     # バックグラウンドスレッドを開始して非同期に処理を実行
     t = threading.Thread(
         target=_run_generation_task,
-        args=(task_id, req.url, req.change_level, req.ai_summary_enabled, req.save_format, req.image_format),
+        args=(task_id, req.url, req.change_level, req.save_format),
         daemon=True
     )
     t.start()

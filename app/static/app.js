@@ -4,8 +4,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const youtubeUrlInput = document.getElementById("youtube-url");
     const sensitivityInput = document.getElementById("sensitivity");
     const sensitivityVal = document.getElementById("sensitivity-val");
-    const aiSummaryEnabled = document.getElementById("ai-summary-enabled");
-    const aiSummaryState = document.getElementById("ai-summary-state");
     const toastContainer = document.getElementById("toast-container");
     
     const inputSection = document.getElementById("input-section");
@@ -31,10 +29,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnConfirmAbort = document.getElementById("btn-confirm-abort");
     const btnConfirmContinue = document.getElementById("btn-confirm-continue");
 
-    const imageFormatBadge = document.getElementById("image-format-badge");
-    const imageFormatJpegRadio = document.getElementById("image-format-jpeg");
-    const imageFormatPngRadio = document.getElementById("image-format-png");
-
 
     // 変化レベル（1〜10）のラベルテキスト
     const changeLevelTexts = {
@@ -56,13 +50,6 @@ document.addEventListener("DOMContentLoaded", () => {
         sensitivityVal.textContent = changeLevelTexts[e.target.value];
     });
 
-    function syncAiSummaryState() {
-        aiSummaryState.textContent = aiSummaryEnabled.checked ? "ON" : "OFF";
-    }
-
-    aiSummaryEnabled.addEventListener("change", syncAiSummaryState);
-    syncAiSummaryState();
-
     function syncSaveFormatState() {
         if (formatPptxRadio && saveFormatBadge) {
             saveFormatBadge.textContent = formatPptxRadio.checked ? "PowerPoint" : "Markdown";
@@ -72,17 +59,6 @@ document.addEventListener("DOMContentLoaded", () => {
         formatPptxRadio.addEventListener("change", syncSaveFormatState);
         formatMarkdownRadio.addEventListener("change", syncSaveFormatState);
         syncSaveFormatState();
-    }
-
-    function syncImageFormatState() {
-        if (imageFormatJpegRadio && imageFormatBadge) {
-            imageFormatBadge.textContent = imageFormatJpegRadio.checked ? "JPEG" : "PNG";
-        }
-    }
-    if (imageFormatJpegRadio && imageFormatPngRadio) {
-        imageFormatJpegRadio.addEventListener("change", syncImageFormatState);
-        imageFormatPngRadio.addEventListener("change", syncImageFormatState);
-        syncImageFormatState();
     }
 
     // 秒数を分:秒フォーマットに変換するヘルパー関数
@@ -487,14 +463,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const url = youtubeUrlInput.value.trim();
         const changeLevel = parseInt(sensitivityInput.value);
-        const aiSummary = aiSummaryEnabled.checked;
 
         if (!url) {
             showToast("error", "URLが入力されていません", "YouTubeの動画URLを入力してください");
             return;
         }
         
-        showToast("info", "処理開始", `変化レベル: ${changeLevelTexts[changeLevel]} / AI要約: ${aiSummary ? "ON" : "OFF"}`);
+        showToast("info", "処理開始", `変化レベル: ${changeLevelTexts[changeLevel]}`);
 
         // UI表示の切り替え
         inputSection.classList.add("hidden");
@@ -524,9 +499,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 body: JSON.stringify({
                     url: url,
                     change_level: changeLevel,
-                    ai_summary_enabled: aiSummary,
-                    save_format: formatPptxRadio.checked ? "pptx" : "markdown",
-                    image_format: imageFormatJpegRadio.checked ? "jpeg" : "png"
+                    save_format: formatPptxRadio.checked ? "pptx" : "markdown"
                 })
             });
 

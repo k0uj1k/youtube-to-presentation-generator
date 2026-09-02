@@ -108,10 +108,6 @@ if exist "%YT_DLP_PATH%" (
 )
 
 echo.
-echo Gemini API: set GEMINI_API_KEY to enable slide summarization.
-echo API key: https://aistudio.google.com/apikey
-
-echo.
 echo ==================================================
 echo   Setup complete! You can now run run.bat
 echo ==================================================

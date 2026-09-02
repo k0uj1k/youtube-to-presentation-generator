@@ -826,27 +826,6 @@ footer {
     width: 104px; /* Markdown の幅 */
 }
 
-/* Image Format Segmented Control */
-.image-format-control label {
-    width: 80px;
-    box-sizing: border-box;
-}
-
-#image-format-jpeg:checked ~ label[for="image-format-jpeg"],
-#image-format-png:checked ~ label[for="image-format-png"] {
-    color: #ffffff;
-}
-
-#image-format-jpeg:checked ~ .image-format-slider {
-    left: 2px;
-    width: 80px;
-}
-
-#image-format-png:checked ~ .image-format-slider {
-    left: 82px;
-    width: 80px;
-}
-
 .result-actions {
     display: flex;
     gap: 12px;

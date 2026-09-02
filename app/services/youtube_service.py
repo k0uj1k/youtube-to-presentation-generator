@@ -6,22 +6,16 @@ import time
 import uuid
 import cv2
 import numpy as np
-import functools
-from ja_sentence_segmenter.common.pipeline import make_pipeline
-from ja_sentence_segmenter.concatenate.simple_concatenator import concatenate_matching
-from ja_sentence_segmenter.normalize.neologd_normalizer import normalize
-from ja_sentence_segmenter.split.simple_splitter import split_newline, split_punctuation
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 import yt_dlp
-import budoux
 from pptx import Presentation
 from pptx.util import Inches, Pt
 # pyrefly: ignore [missing-import]
 from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
 import unicodedata
 from dotenv import load_dotenv
-from .gemini_service import GeminiSummarizer
 from .task_manager import TaskCancelledException
 
 # .env ファイルを読み込む
@@ -47,87 +41,21 @@ _CHANGE_LEVEL_TO_THRESHOLD = {
 }
 
 
-def split_japanese_sentences(text: str) -> str:
-    """日本語のテキストを ja_sentence_segmenter を用いて文ごとに分割し、
-    改行で区切られた読みやすい文字列に整形する。
-    句読点がない自動生成字幕などの場合は、スペースで分割するフォールバックを行う。
-    """
+def clean_japanese_text(text: str) -> str:
+    """日本語テキストを平坦化し、先頭の行頭禁則文字を除去する。"""
     if not text:
         return text
-        
-    split_punc2 = functools.partial(split_punctuation, punctuations=r".。!?")
-    concat_tail_no = functools.partial(
-        concatenate_matching, 
-        former_matching_rule=r"^(?P<result>.+)(の)[.。!?]?$", 
-        remove_former_matched=False
-    )
-    concat_tail_te = functools.partial(
-        concatenate_matching, 
-        former_matching_rule=r"^(?P<result>.+)(て)[.。!?]?$", 
-        remove_former_matched=False
-    )
-    concat_decimal = functools.partial(
-        concatenate_matching, 
-        former_matching_rule=r"^(?P<result>.+)(\d\.)$", 
-        latter_matching_rule=r"^(\d)(?P<result>.+)$", 
-        remove_former_matched=False, 
-        remove_latter_matched=False
-    )
-    
-    # パイプライン構築
-    segmenter = make_pipeline(normalize, split_newline, split_punc2, concat_tail_no, concat_tail_te, concat_decimal)
-    
-    # セグメント実行
-    sentences = list(segmenter(text))
-    
-    # もし文が分割されなかった（句読点がなく、1つの長い文になっている）場合
-    # 自動字幕を想定し、スペース（半角/全角）での分割を試みる
-    if len(sentences) <= 1:
-        spaced_parts = re.split(r'\s+', text)
-        spaced_parts = [p.strip() for p in spaced_parts if p.strip()]
-        if len(spaced_parts) > 1:
-            return "\n".join(spaced_parts)
-            
-    return "\n".join(sentences).strip()
 
+    # 行頭禁則文字（これらの文字は行の先頭に配置できない）
+    kinsoku_head = "、。，．・？！ゝゞー々」』】〕〉》］｝〉）"
 
-def apply_budoux_layout(text: str, max_line_len: int = 25) -> str:
-    """BudouX を使用して、日本語テキストが不自然な位置で改行されないように、
-    適切なフレーズ境界で改行（\n）を挿入して整形する。
-    """
-    if not text:
-        return text
-        
-    parser = budoux.load_default_japanese_parser()
-    lines = text.splitlines()
-    formatted_lines = []
-    
-    for line in lines:
-        if len(line) <= max_line_len:
-            formatted_lines.append(line)
-            continue
-            
-        # フレーズに分割
-        phrases = parser.parse(line)
-        
-        current_line = ""
-        line_parts = []
-        
-        for phrase in phrases:
-            # 現在の行に追加すると上限文字数を超える場合、改行
-            if len(current_line) + len(phrase) > max_line_len:
-                if current_line:
-                    line_parts.append(current_line)
-                current_line = phrase
-            else:
-                current_line += phrase
-                
-        if current_line:
-            line_parts.append(current_line)
-            
-        formatted_lines.extend(line_parts)
-        
-    return "\n".join(formatted_lines)
+    # 改行や空白を平坦化
+    text = "".join(text.split())
+
+    # テキスト先頭が行頭禁則文字の場合は消去する
+    text = text.lstrip(kinsoku_head)
+
+    return text
 
 
 def is_japanese(text: str) -> bool:
@@ -168,9 +96,8 @@ def format_slide_text(text: str) -> str:
         return text
 
     if is_japanese(text):
-        # 日本語の場合は文分割 + BudouX 禁則処理
-        text = split_japanese_sentences(text)
-        text = apply_budoux_layout(text)
+        # 日本語の場合: 空白平坦化 + 先頭行頭禁則文字の消去
+        text = clean_japanese_text(text)
     else:
         # 英語など日本語以外の場合は英文クレンジング
         text = clean_english_text(text)
@@ -223,6 +150,31 @@ def format_timestamp(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+def is_solid_color_image(image_path: str, std_threshold: float = 3.0) -> bool:
+    """画像が単色（真っ黒、真っ白、単色のベタ塗りなど）であるかを判定する。
+    
+    Parameters
+    ----------
+    image_path : str
+        画像のファイルパス。
+    std_threshold : float
+        単色判定の標準偏差閾値（デフォルト 3.0）。圧縮ノイズ等の揺らぎを許容。
+    
+    Returns
+    -------
+    bool
+        単色画像と判定された場合は True、そうでない場合は False。
+    """
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            return False
+        std_dev = np.std(img)
+        return bool(std_dev < std_threshold)
+    except Exception:
+        return False
+
+
 def get_scene_text(transcript: list, current_time: float, next_time: float) -> str:
     """指定区間に含まれる字幕を収集し、スライド向けに整形して返す。"""
     if not transcript:
@@ -258,7 +210,6 @@ def create_markdown_package(
     task_temp_dir: str,
     safe_title: str,
     url: str | None = None,
-    ai_summary_enabled: bool = False,
     task_state=None,
     slide_texts: list[str] | None = None
 ) -> tuple[str, str, list[str]]:
@@ -269,15 +220,6 @@ def create_markdown_package(
     markdown_path = os.path.join(task_temp_dir, markdown_filename)
     os.makedirs(output_dir, exist_ok=True)
     asset_filenames = []
-
-    summarizer = None
-    if ai_summary_enabled:
-        try:
-            summarizer = GeminiSummarizer()
-            print("✓ Gemini API が有効です。Markdown 要約を生成します。")
-        except Exception as e:
-            ai_summary_enabled = False
-            print(f"ℹ Gemini 要約を無効化しました。({e})")
 
     lines = [
         f"# {title}",
@@ -321,33 +263,6 @@ def create_markdown_package(
             "",
             f"![Slide {i + 1}]({image_rel_path})",
             "",
-        ])
-
-        if ai_summary_enabled and summarizer and slide_text:
-            try:
-                summary_result = summarizer.summarize_slide_content(slide_text)
-                key_points = summary_result.get("key_points") or []
-                main_message = summary_result.get("main_message")
-
-                if key_points:
-                    lines.extend([
-                        "### 要点",
-                        "",
-                    ])
-                    lines.extend([f"- {format_slide_text(point)}" for point in key_points])
-                    lines.append("")
-
-                if main_message:
-                    lines.extend([
-                        "### 最も言いたいこと",
-                        "",
-                        main_message,
-                        "",
-                    ])
-            except Exception as e:
-                print(f"スライド {i+1} の要約生成に失敗: {e}")
-
-        lines.extend([
             "### 文字起こし",
             "",
             display_text.replace("\n", "  \n"),
@@ -469,7 +384,7 @@ def download_video(url: str, output_path: str) -> str:
             'no_warnings': True,
         }
         
-        max_retries = 3
+        max_retries = 2
         for attempt in range(max_retries):
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -481,14 +396,14 @@ def download_video(url: str, output_path: str) -> str:
                     raise ValueError("指定された動画は存在しないか、非公開、あるいは地域制限によりアクセスできません。")
                 
                 if attempt < max_retries - 1:
-                    print(f"動画のダウンロードに失敗しました。3秒後にリトライします ({attempt + 1}/{max_retries} 回目の試行): {error_msg}")
-                    time.sleep(3)
+                    print(f"動画のダウンロードに失敗しました。5秒後にリトライします ({attempt + 1}/{max_retries} 回目の試行): {error_msg}")
+                    time.sleep(5)
                 else:
                     raise ValueError(f"動画のダウンロードに失敗しました: {error_msg}")
             except Exception as e:
                 if attempt < max_retries - 1:
-                    print(f"動画ダウンロード中に予期せぬエラーが発生しました。3秒後にリトライします ({attempt + 1}/{max_retries} 回目の試行): {e}")
-                    time.sleep(3)
+                    print(f"動画ダウンロード中に予期せぬエラーが発生しました。5秒後にリトライします ({attempt + 1}/{max_retries} 回目の試行): {e}")
+                    time.sleep(5)
                 else:
                     raise ValueError(f"動画のダウンロード処理中に予期せぬエラーが発生しました: {str(e)}")
     else:
@@ -711,65 +626,70 @@ def create_presentation(
     transcript: list,
     output_pptx_path: str,
     url: str | None = None,
-    ai_summary_enabled: bool = False,
     task_state = None,
     slide_texts: list[str] | None = None
 ):
     """
     抽出した画像と文字起こしテキストをマッピングし、PowerPointプレゼンテーションを生成する。
-    transcript が空リストの場合は画像のみのスライドを生成する。
-    
-    ai_summary_enabled が True の場合のみ、スライドごとに字幕をまとめて
-    5行の要点 + メインメッセージを抽出し、スライドに追加する。
+    A4横サイズ、白地、黒文字、上部にタイムスタンプとスライド番号、中央に70%縮小画像、下部にメイリオ14ptの字幕テキストボックスを配置。
     """
     prs = Presentation()
-    # スライドサイズを 16:9 ワイドスクリーンに設定
-    prs.slide_width = Inches(13.333)
-    prs.slide_height = Inches(7.5)
+    # スライドサイズを A4 横（297mm × 210mm = 11.693in × 8.268in）に設定
+    slide_width_in = 11.693
+    slide_height_in = 8.268
+    prs.slide_width = Inches(slide_width_in)
+    prs.slide_height = Inches(slide_height_in)
 
     # 白紙スライドのレイアウト (blank layout is index 6)
     blank_slide_layout = prs.slide_layouts[6]
-
-    summarizer = None
-    if ai_summary_enabled:
-        try:
-            summarizer = GeminiSummarizer()
-            print("✓ Gemini API が有効です。スライド要約を生成します。")
-        except Exception as e:
-            ai_summary_enabled = False
-            print(f"ℹ Gemini 要約を無効化しました。({e})")
 
     # --- 1. タイトルスライドの作成 ---
     slide = prs.slides.add_slide(blank_slide_layout)
 
     # タイトル用テキストボックス
-    title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.2), Inches(11.333), Inches(3.0))
+    title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.5), Inches(slide_width_in - 2.0), Inches(3.5))
     tf = title_box.text_frame
     tf.word_wrap = True
     p = tf.paragraphs[0]
     p.text = title
-    p.font.size = Pt(44)
+    p.font.size = Pt(36)
     p.font.bold = True
-    p.font.name = "Arial"
-    p.font.color.rgb = RGBColor(33, 37, 41)
+    p.font.name = "Meiryo"
+    p.font.color.rgb = RGBColor(0, 0, 0)
 
     p2 = tf.add_paragraph()
     p2.text = "YouTube動画から自動生成されたスライド資料"
-    p2.font.size = Pt(20)
-    p2.font.name = "Arial"
+    p2.font.size = Pt(18)
+    p2.font.name = "Meiryo"
+    p2.font.color.rgb = RGBColor(80, 80, 80)
+    p2.space_before = Pt(20)
 
     # URL を追加（存在する場合）
     if url:
         p3 = tf.add_paragraph()
         p3.text = f"URL: {url}"
-        p3.font.size = Pt(14)
-        p3.font.name = "Arial"
-        p3.font.color.rgb = RGBColor(0, 102, 204)  # 目立つ色
-    p2.font.color.rgb = RGBColor(108, 117, 125)
-    p2.space_before = Pt(20)
+        p3.font.size = Pt(13)
+        p3.font.name = "Meiryo"
+        p3.font.color.rgb = RGBColor(0, 102, 204)
+        p3.space_before = Pt(10)
 
     # --- 2. コンテンツスライドの作成 ---
-    has_transcript = bool(transcript)
+    # 画像パラメータ: スライド幅全体の70%で中央揃え
+    img_width = Inches(slide_width_in * 0.70)
+    img_left = Inches((slide_width_in - (slide_width_in * 0.70)) / 2) # 左右中央揃え (約1.754インチ)
+    img_top = Inches(0.85)
+
+    # 上部ヘッダー（タイムスタンプ・スライド番号）のパラメータ
+    header_margin_x = Inches(0.8)
+    header_top = Inches(0.4)
+    header_box_width = Inches(4.0)
+    header_height = Inches(0.35)
+
+    # 下部テキストボックスのパラメータ
+    text_left = Inches(0.8)
+    text_top = Inches(5.65)
+    text_width = Inches(slide_width_in - 0.8 * 2) # 約10.093インチ
+    text_height = Inches(2.2)
 
     for i, scene in enumerate(scenes):
         if task_state:
@@ -783,116 +703,47 @@ def create_presentation(
 
         slide = prs.slides.add_slide(blank_slide_layout)
 
-        # レイアウト共通パラメータ (スライド幅 13.333, 高さ 7.5)
-        # 画像幅は全体の 68% (約 9.066 インチ)
-        img_width = Inches(13.333 * 0.68)
-        # 画像高さも全体の 68% (約 5.1 インチ、16:9比を維持)
-        img_height = Inches(7.5 * 0.68)
-        img_left = Inches(0.4) # 左寄せ余白 0.4
-        img_top = Inches((7.5 - 7.5 * 0.68) / 2) # 上下中央寄せ (1.2)
+        # 1. 左上: タイムスタンプ (mm:ss) 12pt
+        ts_box = slide.shapes.add_textbox(header_margin_x, header_top, header_box_width, header_height)
+        tf_ts = ts_box.text_frame
+        tf_ts.word_wrap = False
+        p_ts = tf_ts.paragraphs[0]
+        p_ts.text = format_timestamp(current_time)
+        p_ts.font.size = Pt(12)
+        p_ts.font.name = "Meiryo"
+        p_ts.font.color.rgb = RGBColor(0, 0, 0)
 
-        # テキストボックス位置 (画像と重ならない右側)
-        text_left = img_left + img_width + Inches(0.4) # 約 9.866
-        text_width = Inches(13.333) - text_left - Inches(0.4) # 約 3.067
-        text_top = img_top
-        text_height = img_height
+        # 2. 右上: スライド番号 (slide #) 12pt
+        slide_num_left = Inches(slide_width_in) - header_margin_x - header_box_width
+        num_box = slide.shapes.add_textbox(slide_num_left, header_top, header_box_width, header_height)
+        tf_num = num_box.text_frame
+        tf_num.word_wrap = False
+        p_num = tf_num.paragraphs[0]
+        p_num.text = f"slide {i + 1}"
+        p_num.font.size = Pt(12)
+        p_num.font.name = "Meiryo"
+        p_num.font.color.rgb = RGBColor(0, 0, 0)
+        p_num.alignment = PP_ALIGN.RIGHT
 
-        if has_transcript:
-            slide.shapes.add_picture(scene["image_path"], img_left, img_top, width=img_width)
+        # 3. 中央: スライド画像 (全体の70%の中央揃え)
+        slide.shapes.add_picture(scene["image_path"], img_left, img_top, width=img_width)
 
-            # このスライドの時間範囲に該当する字幕を結合
-            if slide_texts is not None and i < len(slide_texts):
-                slide_text = slide_texts[i]
-            else:
-                slide_text = get_scene_text(transcript, current_time, next_time)
-            if not slide_text:
-                slide_text = "(字幕なし)"
-
-            # 右側: テキストボックス
-            text_box = slide.shapes.add_textbox(text_left, text_top, text_width, text_height)
-            tf = text_box.text_frame
-            tf.word_wrap = True
-
-            p_time = tf.paragraphs[0]
-            p_time.text = f"【シーン開始: {format_timestamp(current_time)}】"
-            p_time.font.size = Pt(14)
-            p_time.font.bold = True
-            p_time.font.color.rgb = RGBColor(0, 123, 255)
-            p_time.space_after = Pt(10)
-
-            # === Gemini で要約を生成 ===
-            if ai_summary_enabled and summarizer and slide_text and "(字幕なし)" not in slide_text:
-                try:
-                    summary_result = summarizer.summarize_slide_content(slide_text)
-
-                    # 【キーポイント】セクション
-                    if summary_result.get("key_points"):
-                        p_key_title = tf.add_paragraph()
-                        p_key_title.text = "【要点】"
-                        p_key_title.font.size = Pt(12)
-                        p_key_title.font.bold = True
-                        p_key_title.font.color.rgb = RGBColor(220, 53, 69)
-                        p_key_title.space_before = Pt(8)
-                        p_key_title.space_after = Pt(4)
-
-                        for key_point in summary_result["key_points"]:
-                            p_kp = tf.add_paragraph()
-                            p_kp.text = f"• {format_slide_text(key_point)}"
-                            p_kp.font.size = Pt(11)
-                            p_kp.font.name = "Arial"
-                            p_kp.font.color.rgb = RGBColor(50, 50, 50)
-                            p_kp.level = 0
-                            p_kp.space_after = Pt(3)
-
-                    # 【メインメッセージ】セクション
-                    if summary_result.get("main_message"):
-                        p_main_title = tf.add_paragraph()
-                        p_main_title.text = "💡 最も言いたいこと"
-                        p_main_title.font.size = Pt(12)
-                        p_main_title.font.bold = True
-                        p_main_title.font.color.rgb = RGBColor(0, 102, 204)
-                        p_main_title.space_before = Pt(8)
-                        p_main_title.space_after = Pt(4)
-
-                        p_main = tf.add_paragraph()
-                        p_main.text = format_slide_text(summary_result["main_message"])
-                        p_main.font.size = Pt(11)
-                        p_main.font.name = "Arial"
-                        p_main.font.color.rgb = RGBColor(20, 20, 100)
-                        p_main.font.italic = True
-                        p_main.line_spacing = 1.2
-
-                except Exception as e:
-                    print(f"スライド {i+1} の要約生成に失敗: {e}")
-                    # フォールバック: 元の字幕を表示
-                    p_content = tf.add_paragraph()
-                    p_content.text = slide_text
-                    p_content.font.size = Pt(11)
-                    p_content.font.name = "Arial"
-                    p_content.font.color.rgb = RGBColor(50, 50, 50)
-                    p_content.line_spacing = 1.3
-            else:
-                # Geminiがない場合は元の字幕を表示
-                p_content = tf.add_paragraph()
-                p_content.text = slide_text
-                p_content.font.size = Pt(11)
-                p_content.font.name = "Arial"
-                p_content.font.color.rgb = RGBColor(50, 50, 50)
-                p_content.line_spacing = 1.3
-
+        # 4. 下部: テキスト (メイリオ 14pt、文字は黒)
+        if slide_texts is not None and i < len(slide_texts):
+            slide_text = slide_texts[i]
         else:
-            # 字幕なし: 画像は同じく左寄せ中央の68%
-            slide.shapes.add_picture(scene["image_path"], img_left, img_top, width=img_width)
+            slide_text = get_scene_text(transcript, current_time, next_time)
 
-            # 右側: タイムスタンプのみ表示 (画像に重ならないように配置)
-            ts_box = slide.shapes.add_textbox(text_left, text_top, text_width, text_height)
-            tf = ts_box.text_frame
-            tf.word_wrap = True
-            p = tf.paragraphs[0]
-            p.text = f"【シーン開始: {format_timestamp(current_time)}】"
-            p.font.size = Pt(14)
-            p.font.bold = True
-            p.font.color.rgb = RGBColor(0, 123, 255)
+        if slide_text:
+            text_box = slide.shapes.add_textbox(text_left, text_top, text_width, text_height)
+            tf_text = text_box.text_frame
+            tf_text.word_wrap = True
+            p_text = tf_text.paragraphs[0]
+            p_text.text = slide_text
+            p_text.font.size = Pt(14)
+            p_text.font.name = "Meiryo"
+            p_text.font.color.rgb = RGBColor(0, 0, 0)
+            p_text.line_spacing = 1.2
 
     prs.save(output_pptx_path)
     print(f"PowerPointファイルを保存しました: {output_pptx_path}")
@@ -901,14 +752,13 @@ def create_presentation(
 def process_youtube_to_presentation(
     url: str,
     change_level: int = 5,
-    ai_summary_enabled: bool = False,
     save_format: str = "pptx",
     task_state = None,
-    image_format: str = "jpeg"
 ) -> dict:
     """
     YouTube URL からプレゼンテーションを生成する一連の処理を実行する。
     字幕が取得できない場合は画像のみのスライドを生成する。
+    画像フォーマットは save_format が markdown の場合は PNG、pptx の場合は JPEG を自動選択する。
 
     Parameters
     ----------
@@ -916,8 +766,10 @@ def process_youtube_to_presentation(
         YouTube 動画の URL。
     change_level : int
         変化検知の感度（1〜10）。1が最も敏感、10が最も鈍感。
-    ai_summary_enabled : bool
-        True のときだけ Gemini 要約を有効化する。
+    save_format : str
+        保存フォーマット（pptx または markdown）。
+    task_state : TaskState, optional
+        進捗管理用の TaskState インスタンス。
     """
     video_id = extract_video_id(url)
     
@@ -952,6 +804,9 @@ def process_youtube_to_presentation(
             task_state.log(f"動画のダウンロードが完了しました: {title}", 30)
 
         # 3. I フレームを参照したスライド切替の検知と画像抽出
+        # Markdown の場合は PNG、PowerPoint の場合は JPEG を使用
+        image_format = "png" if save_format == "markdown" else "jpeg"
+
         if task_state:
             task_state.log("動画の解析（Iフレーム抽出）を開始しました...", 30)
         print("スライド切替の検知中（I フレームのみ参照）...")
@@ -966,6 +821,37 @@ def process_youtube_to_presentation(
             raise ValueError(
                 "スライド画像が検出されませんでした。"
                 "変化レベルを下げて、より小さな変化も検出するようにしてください。"
+            )
+
+        # 単色スライド（真っ黒・真っ白など）かつ文字起こし文章がないスライドを除外する
+        filtered_scenes = []
+        for i, scene in enumerate(scenes):
+            current_time = scene["timestamp"]
+            next_time = scenes[i + 1]["timestamp"] if i + 1 < len(scenes) else float('inf')
+            raw_text = get_scene_text_raw(transcript, current_time, next_time)
+
+            is_solid = is_solid_color_image(scene["image_path"], std_threshold=3.0)
+            has_text = bool(raw_text.strip())
+
+            if is_solid and not has_text:
+                print(f"  単色かつ字幕なしのスライドを除外しました: {format_timestamp(current_time)} (画像: {os.path.basename(scene['image_path'])})")
+                if task_state:
+                    task_state.log(f"単色かつ字幕なしのスライドを除外: {format_timestamp(current_time)}", task_state.progress)
+                try:
+                    if os.path.exists(scene["image_path"]):
+                        os.remove(scene["image_path"])
+                except Exception:
+                    pass
+                continue
+
+            filtered_scenes.append(scene)
+
+        scenes = filtered_scenes
+
+        if not scenes:
+            raise ValueError(
+                "有効なスライド画像が残りませんでした。"
+                "変化レベルを下げるか、動画の内容をご確認ください。"
             )
 
         # スライド枚数が100枚を超えたら、確認ダイアログを表示するため一時停止する
@@ -1048,7 +934,6 @@ def process_youtube_to_presentation(
                 task_temp_dir=task_temp_dir,
                 safe_title=safe_title,
                 url=url,
-                ai_summary_enabled=ai_summary_enabled,
                 task_state=task_state,
                 slide_texts=translated_slide_texts,
             )
@@ -1073,7 +958,6 @@ def process_youtube_to_presentation(
                 transcript,
                 output_pptx_path,
                 url=url,
-                ai_summary_enabled=ai_summary_enabled,
                 task_state=task_state,
                 slide_texts=translated_slide_texts,
             )

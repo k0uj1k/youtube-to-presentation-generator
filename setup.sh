@@ -83,14 +83,6 @@ else
     fi
 fi
 
-# 5. Gemini API Setup Guide
-echo
-echo "[5/5] Gemini API Setup Guide"
-echo "[INFO] To enable slide summarization with Gemini AI, set GEMINI_API_KEY:"
-echo "       1. Get your API key from: https://aistudio.google.com/apikey"
-echo "       2. Linux/macOS: export GEMINI_API_KEY=\"your-api-key-here\""
-echo "          (You can add this to your ~/.bashrc or ~/.zshrc for a persistent setup)"
-
 echo
 echo "=================================================="
 echo "  Setup complete! You can now run run.sh"

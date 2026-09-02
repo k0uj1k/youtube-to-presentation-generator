@@ -57,20 +57,6 @@
 
                     <div class="input-group" style="margin-bottom: 24px;">
                         <div class="label-with-value">
-                            <label for="ai-summary-enabled">AIテキスト要約</label>
-                            <span class="badge" id="ai-summary-state">OFF</span>
-                        </div>
-                        <div class="switch-row">
-                            <span class="switch-hint">字幕があるスライドだけを Gemini で要約します</span>
-                            <label class="toggle-switch" for="ai-summary-enabled">
-                                <input type="checkbox" id="ai-summary-enabled" aria-label="AIテキスト要約">
-                                <span class="toggle-track"></span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="input-group" style="margin-bottom: 24px;">
-                        <div class="label-with-value">
                             <label>保存先フォーマット</label>
                             <span class="badge" id="save-format-badge">PowerPoint</span>
                         </div>
@@ -84,23 +70,6 @@
                                 <label for="format-markdown">Markdown</label>
                                 
                                 <div class="segmented-slider"></div>
-                            </div>
-                        </div>
-                    <div class="input-group" style="margin-bottom: 24px;">
-                        <div class="label-with-value">
-                            <label>画像フォーマット</label>
-                            <span class="badge" id="image-format-badge">JPEG</span>
-                        </div>
-                        <div class="switch-row">
-                            <span class="switch-hint">抽出するスライド画像の保存形式を選択します</span>
-                            <div class="segmented-control image-format-control">
-                                <input type="radio" id="image-format-jpeg" name="image-format" value="jpeg" checked>
-                                <label for="image-format-jpeg">JPEG</label>
-                                
-                                <input type="radio" id="image-format-png" name="image-format" value="png">
-                                <label for="image-format-png">PNG</label>
-                                
-                                <div class="segmented-slider image-format-slider"></div>
                             </div>
                         </div>
                     </div>
