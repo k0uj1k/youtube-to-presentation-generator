@@ -2,6 +2,7 @@ import os
 import threading
 import uuid
 import mimetypes
+from pathlib import PurePosixPath
 from typing import Literal
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -31,8 +32,14 @@ def get_secure_path(task_id: str, path_suffix: str) -> str:
     """
     validate_task_id(task_id)
     
-    # 経路制御文字 (..) や絶対パスの直接指定を拒否
-    if ".." in path_suffix or path_suffix.startswith("/") or "\\" in path_suffix:
+    # バックスラッシュや絶対パス指定を拒否
+    if "\\" in path_suffix or path_suffix.startswith("/"):
+        raise HTTPException(status_code=400, detail="不正なファイル名またはパスが指定されています。")
+
+    # パスセグメント単位でトラバーサル文字 '..' を厳密に判定
+    # （ファイル名やディレクトリ名に '...' などの文字が含まれていても誤検知しないようにする）
+    parts = PurePosixPath(path_suffix).parts
+    if any(part == ".." for part in parts):
         raise HTTPException(status_code=400, detail="不正なファイル名またはパスが指定されています。")
         
     resolved_base = os.path.realpath(TEMP_DIR)

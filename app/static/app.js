@@ -383,7 +383,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function fetchMarkdownFile(taskId, filename) {
-        const response = await fetch(`/api/artifacts/${encodeURIComponent(taskId)}/${filename}`);
+        const encodedPath = filename
+            .split("/")
+            .map((segment) => encodeURIComponent(segment))
+            .join("/");
+        const response = await fetch(`/api/artifacts/${encodeURIComponent(taskId)}/${encodedPath}`);
         if (!response.ok) {
             throw new Error("Markdownファイルの取得に失敗しました。");
         }
