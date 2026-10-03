@@ -2,6 +2,7 @@ import json
 import re
 import subprocess
 import os
+import sys
 import time
 from pathlib import Path
 from typing import List, Dict
@@ -58,31 +59,18 @@ class SubtitleFetcher:
         """yt-dlp コマンドラインツールで .vtt ファイルをダウンロードしてパースする。"""
         vtt_file = None
         
-        # === 優先順位 1: 日本語の手動字幕 ===
+        # === 優先順位 1: 日本語字幕（手動・自動を1回のリクエストでまとめて取得） ===
         vtt_file = self._download_vtt_with_ytdlp(
-            subtitle_type="manual",
+            subtitle_type="both",
             lang=self.lang
         )
         
-        # === 優先順位 2: 日本語の自動生成字幕 ===
+        # === 優先順位 2: 他言語字幕（日本語がない場合のみ、手動・自動を1回でまとめて取得） ===
         if not vtt_file:
+            print("日本語字幕が見つからなかったため、他言語（英語など）の字幕を取得します。")
             vtt_file = self._download_vtt_with_ytdlp(
-                subtitle_type="auto",
-                lang=self.lang
-            )
-        
-        # === 優先順位 3: 他言語の手動字幕（オリジナル）===
-        if not vtt_file:
-            vtt_file = self._download_vtt_with_ytdlp(
-                subtitle_type="manual",
+                subtitle_type="both",
                 lang=None  # 利用可能な言語を自動選択
-            )
-        
-        # === 優先順位 4: 他言語の自動生成字幕（オリジナル）===
-        if not vtt_file:
-            vtt_file = self._download_vtt_with_ytdlp(
-                subtitle_type="auto",
-                lang=None
             )
         
         if not vtt_file:
@@ -98,13 +86,13 @@ class SubtitleFetcher:
             print(f"VTT ファイルの読み込みまたはパースに失敗しました: {e}")
             return []
     
-    def _download_vtt_with_ytdlp(self, subtitle_type: str = "auto", lang: str = None) -> str:
+    def _download_vtt_with_ytdlp(self, subtitle_type: str = "both", lang: str = None) -> str:
         """yt-dlp コマンドで VTT ファイルをダウンロードする。
         
         Parameters
         ----------
         subtitle_type : str
-            'auto' = 自動生成字幕, 'manual' = 手動字幕
+            'both' = 手動または自動生成字幕, 'manual' = 手動字幕, 'auto' = 自動生成字幕
         lang : str or None
             言語コード（'ja', 'en' など）。None の場合は利用可能な言語を自動選択。
         
@@ -122,28 +110,29 @@ class SubtitleFetcher:
                     print(f"古い VTT ファイル {f} のクリーンアップに失敗: {e}")
 
         # yt-dlp コマンドのオプション構築
-        cmd = ["yt-dlp", "--skip-download"]
+        # Python 仮想環境の yt_dlp を直接実行し、429対策として extractor-args を指定
+        cmd = [
+            sys.executable, "-m", "yt_dlp",
+            "--no-update",
+            "--skip-download",
+            "--extractor-args", "youtube:player_client=android,web",
+            "--sub-format", "vtt",
+        ]
         
         # 字幕オプション
-        if subtitle_type == "manual":
+        if subtitle_type == "both":
+            cmd.extend(["--write-subs", "--write-auto-subs"])
+        elif subtitle_type == "manual":
             cmd.append("--write-subs")
         elif subtitle_type == "auto":
             cmd.append("--write-auto-subs")
-        
-        # VTT 形式を指定
-        cmd.append("--sub-format")
-        cmd.append("vtt")
         
         # 言語指定（lang が指定されている場合）
         if lang:
             cmd.append("--sub-langs")
             cmd.append(lang)
-            lang_suffix = lang
-        else:
-            lang_suffix = "*"  # 利用可能な言語すべて
         
         # 出力パターン（ファイル名テンプレート）
-        # デフォルト: {video_id}.{subtitle_type}.{lang}.vtt
         output_template = os.path.join(str(self.temp_dir), "%(id)s.%(ext)s")
         cmd.append("-o")
         cmd.append(output_template)
@@ -164,7 +153,10 @@ class SubtitleFetcher:
                 )
                 
                 if result.returncode != 0:
-                    print(f"yt-dlp エラー: {result.stderr}")
+                    error_output = result.stderr or result.stdout or ""
+                    print(f"yt-dlp エラー: {error_output}")
+                    if "429" in error_output or "Too Many Requests" in error_output:
+                        print("YouTube からのリクエスト制限（HTTP Error 429）を検知しました。")
                     if attempt < max_retries - 1:
                         print("字幕のダウンロードに失敗しました。5秒後にリトライします。")
                         time.sleep(5)
@@ -186,10 +178,6 @@ class SubtitleFetcher:
                     return str(vtt_file)
                 else:
                     print(f"VTT ファイルが見つかりません。タイプ: {subtitle_type}, 言語: {lang}")
-                    if attempt < max_retries - 1:
-                        print("5秒後にリトライします。")
-                        time.sleep(5)
-                        continue
                     return None
                     
             except subprocess.TimeoutExpired:
