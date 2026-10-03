@@ -57,7 +57,7 @@ if exist "%VENV_DIR%\Scripts\python.exe" if exist "%VENV_DIR%\Scripts\pip.exe" (
     )
     echo [INFO] Virtual environment already exists.
 ) else (
-    echo [1/5] Creating Python virtual environment: %VENV_DIR%...
+    echo [1/4] Creating Python virtual environment: %VENV_DIR%...
     %PYTHON_CMD% -m venv "%VENV_DIR%"
     if errorlevel 1 (
         echo [ERROR] Failed to create virtual environment.
@@ -68,11 +68,11 @@ if exist "%VENV_DIR%\Scripts\python.exe" if exist "%VENV_DIR%\Scripts\pip.exe" (
 
 set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
 
-echo [2/5] Upgrading pip...
+echo [2/4] Upgrading pip...
 "%VENV_PYTHON%" -m pip install --upgrade pip
 if errorlevel 1 echo [WARNING] Failed to upgrade pip. Continuing with the installed version.
 
-echo [3/5] Installing dependencies...
+echo [3/4] Installing dependencies...
 "%VENV_PYTHON%" -m pip install -r requirements.txt --prefer-binary
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies.
@@ -80,31 +80,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [4/5] Installing Playwright browsers...
+echo [4/4] Installing Playwright browsers...
 "%VENV_PYTHON%" -m playwright install
 if errorlevel 1 (
     echo [ERROR] Failed to install Playwright browsers.
     pause
     exit /b 1
-)
-
-echo.
-echo [5/5] Downloading yt-dlp.exe...
-set "YT_DLP_URL=https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-set "YT_DLP_PATH=yt-dlp.exe"
-
-if exist "%YT_DLP_PATH%" (
-    echo [INFO] yt-dlp.exe already exists. Skipping download.
-) else (
-    echo [INFO] Downloading yt-dlp.exe from GitHub releases...
-    powershell -NoProfile -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%YT_DLP_URL%' -OutFile '%YT_DLP_PATH%' -ErrorAction Stop}"
-    if errorlevel 1 (
-        echo [WARNING] Failed to download yt-dlp.exe automatically.
-        echo [INFO] Download it manually from https://github.com/yt-dlp/yt-dlp/releases/latest
-        echo        and place yt-dlp.exe in this project directory.
-    ) else (
-        echo [INFO] yt-dlp.exe downloaded successfully.
-    )
 )
 
 echo.

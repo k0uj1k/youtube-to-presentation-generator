@@ -51,37 +51,6 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# 4. Download yt-dlp (Linux binary)
-echo
-echo "[4/4] Downloading yt-dlp..."
-YT_DLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
-YT_DLP_PATH="./yt-dlp"
-
-if [ -f "$YT_DLP_PATH" ]; then
-    echo "[INFO] yt-dlp already exists. Skipping download."
-else
-    echo "[INFO] Downloading yt-dlp from GitHub releases..."
-    DOWNLOAD_SUCCESS=false
-
-    if command -v curl &>/dev/null; then
-        curl -L -o "$YT_DLP_PATH" "$YT_DLP_URL"
-        if [ $? -eq 0 ]; then DOWNLOAD_SUCCESS=true; fi
-    elif command -v wget &>/dev/null; then
-        wget -O "$YT_DLP_PATH" "$YT_DLP_URL"
-        if [ $? -eq 0 ]; then DOWNLOAD_SUCCESS=true; fi
-    fi
-
-    if [ "$DOWNLOAD_SUCCESS" = true ] && [ -f "$YT_DLP_PATH" ]; then
-        chmod +x "$YT_DLP_PATH"
-        echo "[INFO] yt-dlp downloaded successfully."
-        echo "[INFO] Location: $(pwd)/$YT_DLP_PATH"
-    else
-        echo "[WARNING] Failed to download yt-dlp automatically."
-        echo "[INFO] You can download it manually from:"
-        echo "       https://github.com/yt-dlp/yt-dlp/releases/latest"
-        echo "       (Download the Linux binary, place it in the project root directory, and run: chmod +x yt-dlp)"
-    fi
-fi
 
 echo
 echo "=================================================="
