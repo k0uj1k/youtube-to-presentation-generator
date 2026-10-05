@@ -428,10 +428,17 @@ document.addEventListener("DOMContentLoaded", () => {
         const markdownContent = await fetchMarkdownFile(taskId, markdownFilename);
         
         // タイトル名のフォルダを新規に作成し、そのフォルダに対して書き込む
-        const projectDirectoryHandle = await directoryHandle.getDirectoryHandle(assetDirname, { create: true });
+        // File System Access API や OS の制限による Invalid argument エラーを防ぐため安全な名前にサニタイズ
+        const safeDirname = (assetDirname || "presentation")
+            .replace(/[<>:"/\\|?*]/g, "")
+            .replace(/\.{2,}/g, "")
+            .trim()
+            .replace(/^\.+|\.+$/g, "") || "presentation";
+
+        const projectDirectoryHandle = await directoryHandle.getDirectoryHandle(safeDirname, { create: true });
 
         // タイトル名.md として同じフォルダに保存
-        const markdownBaseName = `${assetDirname}.md`;
+        const markdownBaseName = `${safeDirname}.md`;
         await writeTextFile(projectDirectoryHandle, markdownBaseName, markdownContent);
 
         // 同じフォルダにスライド画像を保存

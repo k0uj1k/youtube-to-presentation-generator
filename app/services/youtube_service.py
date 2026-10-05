@@ -111,13 +111,14 @@ def sanitize_filename(title: str, max_length: int = 200) -> str:
     
     - Unicode正規化（NFKC）
     - ファイルシステムで禁止されている文字を削除
+    - 連続するドット（...など）を削除
     - 先頭/末尾の空白やドットを削除
     - 最大文字数を制限
     """
     if not title:
         return "presentation"
     
-    # Unicode正規化（濁音などを統一）
+    # Unicode正規化（濁音などを統一、全角記号を半角に変換）
     title = unicodedata.normalize('NFKC', title)
     
     # ファイルシステムで禁止されている文字を削除・置換
@@ -125,6 +126,10 @@ def sanitize_filename(title: str, max_length: int = 200) -> str:
     # macOS/Linux: /
     forbidden_chars = r'[<>:"/\\|?*]'
     sanitized = re.sub(forbidden_chars, '', title)
+    
+    # 連続するドット（... など）はファイルシステムやブラウザのディレクトリ作成APIで
+    # 不正な引数（Invalid argument）エラーを引き起こすため除去する
+    sanitized = re.sub(r'\.{2,}', '', sanitized)
     
     # 連続する空白をシングルスペースに
     sanitized = re.sub(r'\s+', ' ', sanitized)
@@ -135,6 +140,7 @@ def sanitize_filename(title: str, max_length: int = 200) -> str:
     # 最大文字数を制限（.pptx を考慮）
     if len(sanitized) > max_length:
         sanitized = sanitized[:max_length].strip()
+        sanitized = sanitized.strip('. ')
     
     # 万が一空文字列になった場合のフォールバック
     if not sanitized:
