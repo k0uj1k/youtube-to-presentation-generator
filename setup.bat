@@ -49,29 +49,41 @@ if not errorlevel 1 (
 )
 
 if not defined PYTHON_CMD (
+    where python >nul 2>&1
+    if not errorlevel 1 (
+        python -c "import sys; assert (3, 10) <= sys.version_info < (3, 15)" >nul 2>&1
+        if not errorlevel 1 set "PYTHON_CMD=python"
+    )
+)
+
+if not defined PYTHON_CMD (
     echo [ERROR] Python 3.10 through 3.14 is required.
     pause
     exit /b 1
 )
 
-if exist "%VENV_DIR%\Scripts\python.exe" if exist "%VENV_DIR%\Scripts\pip.exe" (
-    findstr /r /c:"^version = 3.1[0-4]\." "%VENV_DIR%\pyvenv.cfg" >nul
-    if errorlevel 1 (
-        echo [ERROR] The existing virtual environment uses an unsupported Python version.
-        echo [INFO] Delete .venv and run setup.bat again.
-        pause
-        exit /b 1
-    )
-    echo [INFO] Virtual environment already exists.
-) else (
-    echo [1/4] Creating Python virtual environment: %VENV_DIR%...
-    %PYTHON_CMD% -m venv "%VENV_DIR%"
-    if errorlevel 1 (
-        echo [ERROR] Failed to create virtual environment.
-        pause
-        exit /b 1
-    )
+if exist "%VENV_DIR%\Scripts\python.exe" if exist "%VENV_DIR%\Scripts\pip.exe" goto :venv_exists
+
+echo [1/4] Creating Python virtual environment: %VENV_DIR%...
+%PYTHON_CMD% -m venv "%VENV_DIR%"
+if errorlevel 1 (
+    echo [ERROR] Failed to create virtual environment.
+    pause
+    exit /b 1
 )
+goto :venv_ready
+
+:venv_exists
+findstr /r /c:"^version = 3.1[0-4]\." "%VENV_DIR%\pyvenv.cfg" >nul
+if errorlevel 1 (
+    echo [ERROR] The existing virtual environment uses an unsupported Python version.
+    echo [INFO] Delete .venv and run setup.bat again.
+    pause
+    exit /b 1
+)
+echo [INFO] Virtual environment already exists.
+
+:venv_ready
 
 set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
 
