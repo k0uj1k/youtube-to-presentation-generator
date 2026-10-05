@@ -23,7 +23,7 @@
 ## 動作要件
 
 - OS: Windows 10 / 11, Linux (Ubuntu等)
-- Python: 3.8 以上 (環境変数 PATH に `python` または `python3` が登録されている必要があります)
+- Python: 3.10〜3.14 (環境変数 PATH に `python` または `python3` が登録されている必要があります)
 
 ## セットアップと起動手順
 

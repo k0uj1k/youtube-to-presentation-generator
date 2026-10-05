@@ -28,8 +28,16 @@ set "TMP=%SETUP_TEMP%"
 
 where py >nul 2>&1
 if not errorlevel 1 (
-    py -3.12 -c "import sys" >nul 2>&1
-    if not errorlevel 1 set "PYTHON_CMD=py -3.12"
+    py -3.14 -c "import sys" >nul 2>&1
+    if not errorlevel 1 set "PYTHON_CMD=py -3.14"
+    if not defined PYTHON_CMD (
+        py -3.13 -c "import sys" >nul 2>&1
+        if not errorlevel 1 set "PYTHON_CMD=py -3.13"
+    )
+    if not defined PYTHON_CMD (
+        py -3.12 -c "import sys" >nul 2>&1
+        if not errorlevel 1 set "PYTHON_CMD=py -3.12"
+    )
     if not defined PYTHON_CMD (
         py -3.11 -c "import sys" >nul 2>&1
         if not errorlevel 1 set "PYTHON_CMD=py -3.11"
@@ -41,14 +49,13 @@ if not errorlevel 1 (
 )
 
 if not defined PYTHON_CMD (
-    echo [ERROR] Python 3.10, 3.11, or 3.12 is required.
-    echo [INFO] Python 3.14 is not supported by the pinned NumPy and OpenCV packages.
+    echo [ERROR] Python 3.10 through 3.14 is required.
     pause
     exit /b 1
 )
 
 if exist "%VENV_DIR%\Scripts\python.exe" if exist "%VENV_DIR%\Scripts\pip.exe" (
-    findstr /r /c:"^version = 3.1[0-2]\." "%VENV_DIR%\pyvenv.cfg" >nul
+    findstr /r /c:"^version = 3.1[0-4]\." "%VENV_DIR%\pyvenv.cfg" >nul
     if errorlevel 1 (
         echo [ERROR] The existing virtual environment uses an unsupported Python version.
         echo [INFO] Delete .venv and run setup.bat again.

@@ -1,12 +1,12 @@
 # requirements.txt - updated dependencies
 youtube-transcript-api==0.6.2
 yt-dlp
-opencv-python-headless==4.9.0.80
+opencv-python-headless>=4.12.0.88,<5
 python-pptx==0.6.23
 uvicorn==0.30.0
 fastapi==0.112.0
 python-dotenv==1.0.0
 beautifulsoup4==4.12.3
-playwright==1.45.0
-numpy<2
+playwright>=1.55.0
+numpy>=2,<3
 curl-cffi>=0.16.0
